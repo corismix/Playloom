@@ -19,10 +19,9 @@ targets:
     platform: iOS
     sources:
       - path: Playloom
-        excludes:
-          - Resources
     resources:
       - path: Playloom/Resources
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: Playloom
