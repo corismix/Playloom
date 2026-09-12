@@ -33,6 +33,7 @@ jobs:
           -project Playloom.xcodeproj
           -scheme Playloom
           -destination 'platform=iOS Simulator,name=${{ steps.simulator.outputs.device }}'
+          -parallel-testing-enabled NO
           CODE_SIGNING_ALLOWED=NO
       - name: Collect generated project directories
         if: always()
