@@ -4,7 +4,7 @@ import SwiftUI
 struct PlayloomApp: App {
     var body: some Scene {
         WindowGroup {
-            RuntimeSpikeView()
+            GenerationView()
         }
     }
 }

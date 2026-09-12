@@ -8,11 +8,16 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     private(set) var blockedNavigations: [URL] = []
     private(set) var contentProcessTerminations = 0
     private var webView: WKWebView?
-    private let fixtureURL: URL?
+    private var entryURL: URL?
 
     override init() {
-        fixtureURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "RuntimeFixture")
+        entryURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "RuntimeFixture")
             ?? Bundle.main.url(forResource: "index", withExtension: "html")
+        super.init()
+    }
+
+    init(projectDirectory: URL) {
+        entryURL = projectDirectory.appending(path: "index.html")
         super.init()
     }
 
@@ -39,12 +44,12 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     }
 
     func loadFixture() {
-        guard let webView, let fixtureURL else {
+        guard let webView, let entryURL else {
             events.append(.fatal("Bundled runtime fixture is missing"))
             return
         }
         events.removeAll()
-        webView.loadFileURL(fixtureURL, allowingReadAccessTo: fixtureURL.deletingLastPathComponent())
+        webView.loadFileURL(entryURL, allowingReadAccessTo: entryURL.deletingLastPathComponent())
     }
 
     func restart() async throws {
@@ -108,7 +113,7 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
 
     func isAllowedNavigation(_ url: URL) -> Bool {
         if url.scheme == "about" { return true }
-        return url.isFileURL && fixtureURL.map { url.path.hasPrefix($0.deletingLastPathComponent().path) } == true
+        return url.isFileURL && entryURL.map { url.path.hasPrefix($0.deletingLastPathComponent().path) } == true
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
