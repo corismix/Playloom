@@ -21,7 +21,7 @@ struct UniversalRuntimeChecker {
             let pixels = try await session.samplePixels()
             if pixels.isNonBlank { passed.append("canvas not blank") }
             else { failures.append("blank canvas") }
-        } catch { failures.append("pixel sample failed") }
+        } catch { failures.append("pixel sample failed: \(error.localizedDescription)") }
 
         let initialFrames = session.events.filter { if case .heartbeat = $0 { true } else { false } }.count
         try? await ContinuousClock().sleep(for: .milliseconds(200))

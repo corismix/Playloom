@@ -59,7 +59,13 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
 
     func samplePixels() async throws -> PixelSample {
         guard let webView else { throw RuntimeSessionError.notStarted }
-        let raw = try await webView.callAsyncJavaScript("window.playloomPixelSampleText()", arguments: [:], in: nil, contentWorld: .page)
+        let raw: Any = try await withCheckedThrowingContinuation { continuation in
+            webView.evaluateJavaScript("window.playloomPixelSampleText()") { value, error in
+                if let error { continuation.resume(throwing: error) }
+                else if let value { continuation.resume(returning: value) }
+                else { continuation.resume(throwing: RuntimeSessionError.badPixelSample) }
+            }
+        }
         guard let text = raw as? String else { throw RuntimeSessionError.badPixelSample }
         let fields = text.split(separator: ",")
         guard fields.count == 3,
