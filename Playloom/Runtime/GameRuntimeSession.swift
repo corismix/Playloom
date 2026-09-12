@@ -57,8 +57,10 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         attachedForValidation = true
         view.isUserInteractionEnabled = false
         view.alpha = 0.01
-        if let host = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: { $0.isKeyWindow })?.rootViewController?.view {
-            host.addSubview(view)
+        if let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: { $0.isKeyWindow }) {
+            // iOS 27 forbids inserting UIKit children inside UIHostingController.view.
+            // The UIWindow is the supported common ancestor above the hosting controller.
+            window.addSubview(view)
         } else if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
             let window = UIWindow(windowScene: scene)
             let controller = UIViewController()
