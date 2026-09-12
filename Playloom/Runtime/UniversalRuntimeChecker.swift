@@ -34,7 +34,9 @@ struct UniversalRuntimeChecker {
         let initialFrames = session.events.filter { if case .heartbeat = $0 { true } else { false } }.count
         // Multiple heartbeats observed since ready already prove advancement. Only wait
         // for another when startup yielded fewer than two (slow device/runner).
-        let heartbeatAlive = initialFrames >= 2 || await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3))
+        let heartbeatAlive: Bool
+        if initialFrames >= 2 { heartbeatAlive = true }
+        else { heartbeatAlive = await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3)) }
         if heartbeatAlive { passed.append("heartbeat alive") }
         else { failures.append("heartbeat stalled") }
 
