@@ -21,10 +21,18 @@ final class GenerationModel {
     private let keyStore: APIKeyStore
     private let provider: ModelProvider
     private let workspace: ProjectWorkspace
+    private let runtimeCheck: (GameRuntimeSession) async -> RuntimeReport
 
-    init(keyStore: APIKeyStore = APIKeyStore(account: "opencode-go"), provider: ModelProvider? = nil) {
+    init(
+        keyStore: APIKeyStore = APIKeyStore(account: "opencode-go"),
+        provider: ModelProvider? = nil,
+        runtimeCheck: @escaping (GameRuntimeSession) async -> RuntimeReport = { session in
+            await UniversalRuntimeChecker().run(session: session)
+        }
+    ) {
         self.keyStore = keyStore
         self.provider = provider ?? OpenCodeGoProvider(keyStore: keyStore)
+        self.runtimeCheck = runtimeCheck
         self.workspace = try! ProjectWorkspace()
         if (try? keyStore.read()) != nil { status = "Ready" }
     }
@@ -74,7 +82,7 @@ final class GenerationModel {
             status = "Running 6 safety checks"; detail = "Load, JavaScript, canvas, heartbeat, input, and restart."
             // Yield so SwiftUI presents the candidate at full opacity before WebKit checks.
             await Task.yield()
-            let report = await UniversalRuntimeChecker().run(session: checkingSession)
+            let report = await runtimeCheck(checkingSession)
             guard report.isPassing else {
                 status = "Candidate rejected"
                 detail = report.failures.joined(separator: " | ")

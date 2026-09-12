@@ -7,7 +7,16 @@ final class VerticalSliceTests: XCTestCase {
         let initial = try fixtureProject(title: "First game", accent: "#50e3c2")
         let edited = try fixtureProject(title: "Faster game", accent: "#ffcc33")
         let provider = FakeModelProvider(initial: initial, edited: edited)
-        let model = GenerationModel(provider: provider)
+        // RuntimeIntegrationTests owns the real WKWebView acceptance pass. Keep this
+        // orchestration test deterministic so repeated WebKit snapshots cannot exhaust
+        // the simulator GPU process and obscure generation/edit behavior.
+        let model = GenerationModel(provider: provider) { _ in
+            RuntimeReport(
+                passed: ["WebKit bridge ready", "loads", "no JavaScript crash", "canvas not blank", "heartbeat alive", "input works", "restart works"],
+                failures: [],
+                console: []
+            )
+        }
         model.prompt = "Make a dodge game"
 
         await model.generate()
