@@ -19,16 +19,16 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
         }
     }
 
-    func generateProject(prompt: String) async throws -> GameProject { try await request(user: prompt) }
+    func generateProject(prompt: String) async throws -> GameProject { try await request(user: prompt, effort: .max) }
     func editProject(_ project: GameProject, instruction: String) async throws -> GameProject {
         let data = try JSONEncoder().encode(project)
         guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
         return try await request(user: "Current project:\n\(json)\n\nEdit:\n\(instruction)\nReturn the complete updated project.")
     }
 
-    private func request(user: String) async throws -> GameProject {
+    private func request(user: String, effort: ReasoningEffort) async throws -> GameProject {
         guard let key = try keyStore.read() else { throw ProviderError.missingKey }
-        let first = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user)])
+        let first = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user)], effort: effort)
         do {
             let project = try Self.decodeProject(from: first)
             print("PLAYLOOM_OPENCODE_REPAIR_USED=false")
@@ -39,20 +39,20 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
             let repair = """
             Your prior answer could not be decoded as the required project JSON (\(shape)). Return the same project again as one valid JSON object only. No markdown, analysis, preface, suffix, or unescaped newlines inside JSON strings. Required keys: title and files; files must contain index.html, game.js, and style.css.
             """
-            let second = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user), .init(role: "assistant", content: first), .init(role: "user", content: repair)])
+            let second = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user), .init(role: "assistant", content: first), .init(role: "user", content: repair)], effort: .low)
             do { return try Self.decodeProject(from: second) }
             catch { throw OpenCodeGoError.unparseable(first: shape, repair: Self.responseShape(second)) }
         }
     }
 
-    private func completion(key: String, messages: [Request.Message]) async throws -> String {
+    private func completion(key: String, messages: [Request.Message], effort: ReasoningEffort) async throws -> String {
         var request = URLRequest(url: URL(string: "https://opencode.ai/zen/go/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("playloom-ios/0.1", forHTTPHeaderField: "User-Agent")
         request.setValue(conversationID, forHTTPHeaderField: "x-opencode-session")
-        let body = try JSONEncoder().encode(Request(model: model, messages: messages))
+        let body = try JSONEncoder().encode(Request(model: model, messages: messages, thinking: .init(type: "enabled"), reasoningEffort: effort))
         let (data, response): (Data, URLResponse)
         if let backgroundClient { (data, response) = try await backgroundClient.upload(for: request, body: body) }
         else { request.httpBody = body; (data, response) = try await session.data(for: request) }
@@ -105,9 +105,18 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
     """
 }
 
+nonisolated enum ReasoningEffort: String, Encodable { case low, high, max }
 private nonisolated struct Request: Encodable {
-    let model: String; let messages: [Message]
+    let model: String
+    let messages: [Message]
+    let thinking: Thinking
+    let reasoningEffort: ReasoningEffort
     struct Message: Encodable { let role: String; let content: String }
+    struct Thinking: Encodable { let type: String }
+    enum CodingKeys: String, CodingKey {
+        case model, messages, thinking
+        case reasoningEffort = "reasoning_effort"
+    }
 }
 private nonisolated struct Response: Decodable { let choices: [Choice]; struct Choice: Decodable { let message: Message }; struct Message: Decodable { let content: String } }
 nonisolated enum OpenCodeGoError: Error, LocalizedError, CustomStringConvertible {
