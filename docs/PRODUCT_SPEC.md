@@ -71,6 +71,14 @@ One maker sketching short arcade, puzzle, platform, or toy-like 2D games without
 - Generation and patching are cancellable.
 - A failed candidate never replaces the current passing version.
 
+### Typed game plan and evidence
+
+Before generating project code, Playloom derives a constrained typed game plan from the user's verbatim prompt in the same provider response. The plan names the core loop, player actions, controls, entities, win/lose conditions, and done-when checks. Derived assumptions stay separate from the original prompt and cannot silently replace it.
+
+Every promised mechanic maps to evidence in the self-check plan: state deltas for behavior, screenshots for appearance/layout, and input traces plus decisive frames for feel. Runtime-state fields that no check consumes are rejected as unnecessary; claims without obtainable evidence remain visibly unverified.
+
+Before recovery, failures are classified as model output, game runtime, validator/harness, or platform/lifecycle. Playloom never repairs generated game code when evidence identifies the validator or platform, and never weakens a check merely to pass a candidate.
+
 ### Runtime validation
 
 Universal checks apply to every game and are owned by Playloom:

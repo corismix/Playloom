@@ -106,12 +106,13 @@ private nonisolated struct Request: Encodable {
     struct Message: Encodable { let role: String; let content: String }
 }
 private nonisolated struct Response: Decodable { let choices: [Choice]; struct Choice: Decodable { let message: Message }; struct Message: Decodable { let content: String } }
-nonisolated enum OpenCodeGoError: Error, CustomStringConvertible {
+nonisolated enum OpenCodeGoError: Error, LocalizedError, CustomStringConvertible {
     case invalidResponse, noJSONObject(String), unparseable(first: String, repair: String), http(status: Int, providerMessage: String)
+    var errorDescription: String? { description }
     var description: String { switch self {
-    case .invalidResponse: "invalid response"
-    case .noJSONObject(let shape): "no JSON object: \(shape)"
-    case let .unparseable(first, repair): "unparseable first=[\(first)] repair=[\(repair)]"
-    case let .http(status, message): "HTTP \(status): \(message)"
+    case .invalidResponse: "OpenCode Go returned a response Playloom could not read. Try again."
+    case .noJSONObject(let shape): "OpenCode Go did not return project JSON (\(shape))."
+    case let .unparseable(first, repair): "OpenCode Go returned malformed project JSON twice. First response: [\(first)]. Repair response: [\(repair)]."
+    case let .http(status, message): "OpenCode Go request failed with HTTP \(status): \(message)"
     } }
 }

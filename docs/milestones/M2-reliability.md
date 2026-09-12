@@ -9,7 +9,10 @@ Make generation failure bounded, diagnosable, and reversible.
 - Typed patch allowlist with path, type, size, origin, and secret-like-content validation.
 - Candidate staging and atomic promotion of the last passing state.
 - Universal floor as an app-owned fixed suite.
-- Constrained game-plan schema and game-specific checks generated from it.
+- One-response constrained game-plan schema derived separately from the verbatim prompt: core loop, actions, controls, entities, win/lose conditions, and done-when checks.
+- Evidence-per-mechanic mapping: state delta, screenshot, or input trace/decisive frames; reject unused runtime-state fields and mark claims without evidence unverified.
+- Game-specific checks generated from the typed plan.
+- Pre-recovery failure classification: model output, game runtime, validator/harness, or platform/lifecycle; never repair generated code for a harness/platform fault or weaken an assertion to pass.
 - Structured run report separating universal failures from plan-specific failures.
 - Failure-classified recovery per ADR-008: sanitized diagnostic repair only for malformed JSON, syntax, or actionable crashes; blind resampling for logic/behavior failures.
 - Visible recovery budget capped at two rounds after the initial candidate.

@@ -108,6 +108,10 @@ Two layers stay explicit:
 - required entities/transitions appear;
 - planned win/lose/progression behavior is observable.
 
+The user's verbatim prompt and the derived typed game plan remain separate. The plan defines the core loop, controls, entities, win/lose conditions, and evidence-backed done-when checks. Every runtime-state field must be consumed by a check; state, screenshot, and input-trace evidence are selected by claim type.
+
+Failures are classified before recovery as model output, game runtime, validator/harness, or platform/lifecycle. Generated code is never repaired to mask harness or platform faults, and assertions are never weakened just to pass.
+
 A game plan cannot disable the universal floor. The vertical slice lands the universal checks first; the reliability milestone adds richer plan-generated assertions and bounded, failure-classified recovery per ADR-008.
 
 ### Assets
