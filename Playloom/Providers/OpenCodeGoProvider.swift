@@ -6,9 +6,11 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
     private let session: URLSession
     private let model: String
     private let conversationID: String
+    private let backgroundClient: BackgroundHTTPClient?
 
     init(keyStore: APIKeyStoring, session: URLSession? = nil, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString) {
         self.keyStore = keyStore; self.model = model; self.conversationID = conversationID
+        self.backgroundClient = session == nil ? .shared : nil
         if let session { self.session = session } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 300
@@ -50,8 +52,10 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("playloom-ios/0.1", forHTTPHeaderField: "User-Agent")
         request.setValue(conversationID, forHTTPHeaderField: "x-opencode-session")
-        request.httpBody = try JSONEncoder().encode(Request(model: model, messages: messages))
-        let (data, response) = try await session.data(for: request)
+        let body = try JSONEncoder().encode(Request(model: model, messages: messages))
+        let (data, response): (Data, URLResponse)
+        if let backgroundClient { (data, response) = try await backgroundClient.upload(for: request, body: body) }
+        else { request.httpBody = body; (data, response) = try await session.data(for: request) }
         guard let http = response as? HTTPURLResponse else { throw OpenCodeGoError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw OpenCodeGoError.http(status: http.statusCode, providerMessage: Self.sanitizedError(data)) }
         let envelope = try JSONDecoder().decode(Response.self, from: data)

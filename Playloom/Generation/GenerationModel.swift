@@ -12,6 +12,7 @@ final class GenerationModel {
     private(set) var detail = ""
     private(set) var isWorking = false
     private(set) var wasBackgroundedDuringGeneration = false
+    private var isAppActive = true
     private(set) var session: GameRuntimeSession?
     private(set) var candidateSession: GameRuntimeSession?
     private(set) var project: GameProject?
@@ -42,24 +43,28 @@ final class GenerationModel {
     func didEnterBackground() {
         guard isWorking else { return }
         wasBackgroundedDuringGeneration = true
-        status = "Generation interrupted by lock/background"
-        detail = "Return to Playloom and keep it open. The last playable game is safe."
+        isAppActive = false
+        status = "Generating in background"
+        detail = "You can lock your phone. Playloom will check the game when you return."
     }
 
     func didBecomeActive() {
+        isAppActive = true
         guard isWorking, wasBackgroundedDuringGeneration else { return }
-        status = "Checking request after interruption"
-        detail = "Keep Playloom open. If iOS stopped the request, you can retry without losing the last playable game."
+        status = "Resuming generation"
+        detail = "If the provider finished, validation will start now."
     }
 
     private func perform(action: String, _ operation: () async throws -> GameProject) async {
         isWorking = true; wasBackgroundedDuringGeneration = false
         status = action
-        detail = "Contacting \(provider.displayName). Keep Playloom open and unlocked; this can take several minutes."
-        UIApplication.shared.isIdleTimerDisabled = true
+        detail = "Contacting \(provider.displayName). You may lock your phone; return later to validate the result."
         defer { isWorking = false; candidateSession = nil; UIApplication.shared.isIdleTimerDisabled = false }
         do {
             let candidate = try await operation()
+            try persistPending(candidate)
+            while !isAppActive { try await ContinuousClock().sleep(for: .milliseconds(250)) }
+            UIApplication.shared.isIdleTimerDisabled = true
             status = "Staging generated files"; detail = "Checking project structure and copying the local Phaser runtime."
             let directory = try workspace.stage(candidate)
             status = "Starting game runtime"; detail = "Loading the candidate in a sandboxed WebKit view."
@@ -76,6 +81,7 @@ final class GenerationModel {
                 return
             }
             project = candidate; session = checkingSession
+            clearPending()
             status = "Playable"
             detail = "Passed: " + report.passed.joined(separator: ", ")
         } catch {
@@ -83,4 +89,13 @@ final class GenerationModel {
             detail = "\(error.localizedDescription). The last playable game was preserved; retry when ready and keep Playloom open."
         }
     }
+
+    private var pendingURL: URL {
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root.appending(path: "pending-generated-project.json")
+    }
+    private func persistPending(_ candidate: GameProject) throws { try JSONEncoder().encode(candidate).write(to: pendingURL, options: .atomic) }
+    private func clearPending() { try? FileManager.default.removeItem(at: pendingURL) }
+
 }
