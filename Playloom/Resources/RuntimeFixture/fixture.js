@@ -18,5 +18,9 @@
     for(let i=0;i<data.length;i+=4) if(data[i]!==16 || data[i+1]!==21 || data[i+2]!==34) changed++;
     return {changedRatio:changed/(data.length/4),width:canvas.width,height:canvas.height};
   };
+  window.playloomPixelSampleText = () => {
+    const sample=window.playloomPixelSample();
+    return `${sample.changedRatio},${sample.width},${sample.height}`;
+  };
   draw(); send({type:'ready'}); requestAnimationFrame(loop);
 })();
