@@ -41,6 +41,7 @@ One maker sketching short arcade, puzzle, platform, or toy-like 2D games without
 - Universal programmatic runtime floor on every candidate.
 - Game-specific assertions generated from a game plan, kept separate from the universal floor.
 - Bounded repair loop, rollback, revisions, app-private persistence, and Files import/export as reliability/projects milestones mature.
+- Long-generation UX and lifecycle resilience: real stage progress, provider streaming where available, honest keep-open guidance when iOS suspension would stop work, interrupted-request recovery, and temporary idle-timer suppression while foreground generation runs.
 - Procedural shapes and user-imported images as the free asset baseline.
 - Local usage estimates where providers return usage.
 
