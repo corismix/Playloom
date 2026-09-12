@@ -10,14 +10,20 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
     private let lock = NSLock()
     private var states: [Int: State] = [:]
     private var backgroundCompletion: (@Sendable () -> Void)?
-    private lazy var session: URLSession = {
-        let configuration = URLSessionConfiguration.background(withIdentifier: Self.identifier)
-        configuration.isDiscretionary = false
-        configuration.sessionSendsLaunchEvents = true
-        configuration.timeoutIntervalForRequest = 300
-        configuration.timeoutIntervalForResource = 600
-        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-    }()
+    private let sessionBox = SessionBox()
+    private var session: URLSession {
+        lock.withLock {
+            if let session = sessionBox.value { return session }
+            let configuration = URLSessionConfiguration.background(withIdentifier: Self.identifier)
+            configuration.isDiscretionary = false
+            configuration.sessionSendsLaunchEvents = true
+            configuration.timeoutIntervalForRequest = 300
+            configuration.timeoutIntervalForResource = 600
+            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+            sessionBox.value = session
+            return session
+        }
+    }
 
     func upload(for request: URLRequest, body: Data) async throws -> (Data, URLResponse) {
         let bodyURL = FileManager.default.temporaryDirectory.appending(path: "playloom-provider-\(UUID().uuidString).json")
@@ -52,6 +58,8 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
         DispatchQueue.main.async { completion?() }
     }
 }
+
+private final class SessionBox: @unchecked Sendable { var value: URLSession? }
 
 private extension NSLock {
     func withLock<T>(_ body: () -> T) -> T { lock(); defer { unlock() }; return body() }
