@@ -26,8 +26,12 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
     private func request(user: String) async throws -> GameProject {
         guard let key = try keyStore.read() else { throw ProviderError.missingKey }
         let first = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user)])
-        do { return try Self.decodeProject(from: first) }
-        catch {
+        do {
+            let project = try Self.decodeProject(from: first)
+            print("PLAYLOOM_OPENCODE_REPAIR_USED=false")
+            return project
+        } catch {
+            print("PLAYLOOM_OPENCODE_REPAIR_USED=true")
             let shape = Self.responseShape(first)
             let repair = """
             Your prior answer could not be decoded as the required project JSON (\(shape)). Return the same project again as one valid JSON object only. No markdown, analysis, preface, suffix, or unescaped newlines inside JSON strings. Required keys: title and files; files must contain index.html, game.js, and style.css.

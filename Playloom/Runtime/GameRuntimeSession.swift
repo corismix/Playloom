@@ -65,7 +65,7 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     func samplePixels() async throws -> PixelSample {
         guard let webView else { throw RuntimeSessionError.notStarted }
         let text: String = try await withCheckedThrowingContinuation { continuation in
-            webView.evaluateJavaScript("window.playloomPixelSampleText()") { value, error in
+            webView.evaluateJavaScript(Self.pixelSamplerScript) { value, error in
                 if let error { continuation.resume(throwing: error) }
                 else if let text = value as? String { continuation.resume(returning: text) }
                 else { continuation.resume(throwing: RuntimeSessionError.badPixelSample) }
@@ -120,6 +120,33 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         contentProcessTerminations += 1
         events.append(.fatal("Web content process terminated"))
     }
+
+    // This check belongs to Playloom, not generated code. Accept a valid generated
+    // probe for compatibility, then fall back to inspecting the Phaser canvas directly.
+    nonisolated private static let pixelSamplerScript = #"""
+    (() => {
+      try {
+        const supplied = window.playloomPixelSampleText?.();
+        if (typeof supplied === 'string' && /^([0-9]*\.)?[0-9]+,\d+,\d+$/.test(supplied)) return supplied;
+        if (supplied && typeof supplied === 'object') {
+          const ratio = Number(supplied.changedRatio), width = Number(supplied.width), height = Number(supplied.height);
+          if (Number.isFinite(ratio) && width > 0 && height > 0) return `${ratio},${width},${height}`;
+        }
+      } catch (_) {}
+      const canvas = document.querySelector('canvas');
+      if (!canvas || canvas.width < 1 || canvas.height < 1) return '0,0,0';
+      const context = canvas.getContext('2d', {willReadFrequently:true});
+      if (!context) return `0,${canvas.width},${canvas.height}`;
+      const width = Math.min(canvas.width, 96), height = Math.min(canvas.height, 96);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      const colors = new Map(); let largest = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const key = `${pixels[i] >> 3},${pixels[i+1] >> 3},${pixels[i+2] >> 3},${pixels[i+3] >> 5}`;
+        const count = (colors.get(key) || 0) + 1; colors.set(key, count); largest = Math.max(largest, count);
+      }
+      return `${1 - largest / (pixels.length / 4)},${canvas.width},${canvas.height}`;
+    })()
+    """#
 
     nonisolated private static let errorCaptureScript = #"""
     (() => {
