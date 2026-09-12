@@ -23,7 +23,7 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
     func editProject(_ project: GameProject, instruction: String) async throws -> GameProject {
         let data = try JSONEncoder().encode(project)
         guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
-        return try await request(user: "Current project:\n\(json)\n\nEdit:\n\(instruction)\nReturn the complete updated project.")
+        return try await request(user: "Current project:\n\(json)\n\nEdit:\n\(instruction)\nReturn the complete updated project.", effort: .high)
     }
 
     private func request(user: String, effort: ReasoningEffort) async throws -> GameProject {
