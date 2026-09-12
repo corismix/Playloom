@@ -11,7 +11,7 @@ nonisolated final class APIKeyStore: APIKeyStoring, @unchecked Sendable {
     private let service: String
     private let account: String
 
-    init(service: String = "mix.cori.Playloom.credentials", account: String) { self.service = service; self.account = account }
+    init(service: String = "io.github.corismix.playloom.credentials", account: String) { self.service = service; self.account = account }
 
     func read() throws -> String? {
         var query = baseQuery; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
