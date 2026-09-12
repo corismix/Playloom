@@ -74,7 +74,20 @@ private final class RequestCaptureURLProtocol: URLProtocol, @unchecked Sendable 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let body = request.httpBody ?? Data()
+        let body: Data
+        if let httpBody = request.httpBody { body = httpBody }
+        else if let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var collected = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                collected.append(buffer, count: count)
+            }
+            body = collected
+        } else { body = Data() }
         let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
         let responseData = Self.lock.withLock { () -> Data in
             Self.efforts.append(object?["reasoning_effort"] as? String ?? "missing")
