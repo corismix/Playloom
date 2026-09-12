@@ -22,16 +22,18 @@ struct UniversalRuntimeChecker {
         if fatal.isEmpty { passed.append("no JavaScript crash") }
         else { failures.append("JavaScript: " + fatal.joined(separator: "; ")) }
 
+        // `ready` may precede final SwiftUI layout and the first stable WebGL frame on device.
+        try? await ContinuousClock().sleep(for: .seconds(2))
+
         do {
-            let pixels = try await session.samplePixels()
+            let pixels = try await session.sampleVisiblePixels()
             if pixels.isNonBlank { passed.append("canvas not blank") }
             else { failures.append("blank canvas") }
         } catch { failures.append("pixel sample failed: \(error.localizedDescription)") }
 
         let initialFrames = session.events.filter { if case .heartbeat = $0 { true } else { false } }.count
-        try? await ContinuousClock().sleep(for: .milliseconds(200))
-        let laterFrames = session.events.filter { if case .heartbeat = $0 { true } else { false } }.count
-        if laterFrames > initialFrames { passed.append("heartbeat alive") }
+        let advanced = await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3))
+        if advanced { passed.append("heartbeat alive") }
         else { failures.append("heartbeat stalled") }
 
         do {

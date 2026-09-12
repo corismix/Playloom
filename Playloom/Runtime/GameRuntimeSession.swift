@@ -69,6 +69,25 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         _ = try await webView.callAsyncJavaScript("window.playloomProbeInput()", arguments: [:], in: nil, contentWorld: .page)
     }
 
+    func sampleVisiblePixels() async throws -> PixelSample {
+        guard let webView else { throw RuntimeSessionError.notStarted }
+        let image = try await webView.takeSnapshot(configuration: nil)
+        guard let cgImage = image.cgImage else { throw RuntimeSessionError.badPixelSample }
+        let width = min(cgImage.width, 128), height = min(cgImage.height, 128)
+        guard width > 0, height > 0 else { throw RuntimeSessionError.badPixelSample }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw RuntimeSessionError.badPixelSample }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var buckets: [UInt32: Int] = [:]; var largest = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            let key = UInt32(pixels[index] >> 3) << 15 | UInt32(pixels[index+1] >> 3) << 10 | UInt32(pixels[index+2] >> 3) << 5 | UInt32(pixels[index+3] >> 3)
+            let count = (buckets[key] ?? 0) + 1; buckets[key] = count; largest = max(largest, count)
+        }
+        return PixelSample(changedRatio: 1 - Double(largest) / Double(width * height), width: cgImage.width, height: cgImage.height)
+    }
+
     func samplePixels() async throws -> PixelSample {
         guard let webView else { throw RuntimeSessionError.notStarted }
         let text: String = try await withCheckedThrowingContinuation { continuation in
@@ -112,13 +131,23 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         """#
         let page: String
         do {
-            let value = try await webView.callAsyncJavaScript(javascript, arguments: [:], in: nil, contentWorld: .page)
-            page = value.map { String(describing: $0) } ?? "nil"
+            let value = try await webView.evaluateJavaScript(javascript)
+            page = String(describing: value)
         } catch { page = "snapshotError=\(error.localizedDescription)" }
         let heartbeatCount = events.reduce(into: 0) { count, event in if case .heartbeat = event { count += 1 } }
         let inputCount = events.filter { $0 == .inputReceived }.count
         let eventSummary = "events=\(events.count),heartbeats=\(heartbeatCount),inputs=\(inputCount),console=\(events.compactMap { if case let .console(level,message) = $0 { return "[\(level)] \(message)" }; return nil }.suffix(5))"
         return "\(startupDiagnostic); \(hierarchy); page=\(page); \(eventSummary)"
+    }
+
+    func waitForHeartbeat(after count: Int, timeout: Duration) async -> Bool {
+        let clock = ContinuousClock(); let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            let current = events.filter { if case .heartbeat = $0 { return true }; return false }.count
+            if current > count { return true }
+            try? await clock.sleep(for: .milliseconds(100))
+        }
+        return false
     }
 
     func waitUntilNavigationBlocked(timeout: Duration) async -> Bool {
