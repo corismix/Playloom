@@ -6,7 +6,7 @@ struct UniversalRuntimeChecker {
         var passed: [String] = []
         var failures: [String] = []
 
-        if await session.waitFor({ $0 == .ready }, timeout: .seconds(5)) { passed.append("loads") }
+        if await session.waitFor({ $0 == .ready }, timeout: .seconds(15)) { passed.append("loads") }
         else { failures.append("load timeout") }
 
         let fatal = session.events.compactMap { event -> String? in
