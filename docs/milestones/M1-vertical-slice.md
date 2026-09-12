@@ -1,5 +1,7 @@
 # Milestone 1: Vertical Slice
 
+**Status: complete and device-proven (September 13, 2026).** A fresh OpenCode Go generation passed all seven reported runtime checks on a physical iPhone, produced a playable touch-controlled game, and accepted an edit that visibly changed the score HUD. Required iOS and docs CI passed on `main` at commit `a3f48d723bb678b37d5a8db3b0c247508288248b` ([iOS run](https://github.com/corismix/Playloom/actions/runs/34722525048), [docs run](https://github.com/corismix/Playloom/actions/runs/34722525211)).
+
 ## Outcome
 
 Complete one narrow product loop: prompt → one stable provider → Phaser project → universal checks → play → chat edit → patch/reload.

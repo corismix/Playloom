@@ -42,10 +42,13 @@ final class GenerationModel {
         catch { status = "Could not save key"; detail = error.localizedDescription }
     }
 
-    func generate() async { await perform(action: "Generating project") { try await provider.generateProject(prompt: prompt) } }
+    func generate() async { _ = await perform(action: "Generating project") { try await provider.generateProject(prompt: prompt) } }
     func applyEdit() async {
         guard let project else { status = "Generate a game first"; return }
-        await perform(action: "Generating edit") { try await provider.editProject(project, instruction: edit) }
+        let succeeded = await perform(action: "Generating edit") {
+            try await provider.editProject(project, instruction: edit)
+        }
+        if succeeded { edit = "" }
     }
 
     func didEnterBackground() {
@@ -63,7 +66,7 @@ final class GenerationModel {
         detail = "If the provider finished, validation will start now."
     }
 
-    private func perform(action: String, _ operation: () async throws -> GameProject) async {
+    private func perform(action: String, _ operation: () async throws -> GameProject) async -> Bool {
         isWorking = true; wasBackgroundedDuringGeneration = false
         status = action
         detail = "Contacting \(provider.displayName). You may lock your phone; return later to validate the result."
@@ -86,15 +89,17 @@ final class GenerationModel {
             guard report.isPassing else {
                 status = "Candidate rejected"
                 detail = report.failures.joined(separator: " | ")
-                return
+                return false
             }
             project = candidate; session = checkingSession
             clearPending()
             status = "Playable"
             detail = "Passed: " + report.passed.joined(separator: ", ")
+            return true
         } catch {
             status = wasBackgroundedDuringGeneration ? "Request stopped while app was inactive" : "Generation failed"
             detail = "\(error.localizedDescription). The last playable game was preserved; retry when ready and keep Playloom open."
+            return false
         }
     }
 

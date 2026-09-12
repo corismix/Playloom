@@ -29,6 +29,7 @@ final class VerticalSliceTests: XCTestCase {
         await model.applyEdit()
 
         XCTAssertEqual(model.project?.title, "Faster game")
+        XCTAssertEqual(model.edit, "")
         XCTAssertNotNil(model.session)
         XCTAssertEqual(model.status, "Playable", model.detail)
         let requests = await provider.requests

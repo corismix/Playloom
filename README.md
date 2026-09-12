@@ -4,7 +4,7 @@ Playloom is an iPhone and iPad app that turns a chat prompt into a small, playab
 
 Playloom is a personal project. If it is published, the app is free. Users bring their own API access. Playloom has no account system, billing service, token markup, or required backend.
 
-> Status: specification only. There is no app code yet.
+> Status: Milestone 1 is device-proven. Prompt, generation, seven runtime checks, play, and edit/reload pass on a physical iPhone.
 
 ## v1 vertical slice
 

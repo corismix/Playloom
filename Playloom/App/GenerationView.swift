@@ -8,14 +8,15 @@ struct GenerationView: View {
     private enum Field { case prompt, key, edit }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        GeometryReader { geometry in
+            NavigationStack {
+                ScrollView {
                 VStack(spacing: 12) {
                     if let checking = model.candidateSession {
                         ZStack {
                             GameWebView(session: checking)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                                .frame(minHeight: 360)
+                                .frame(height: gameHeight(in: geometry.size.height))
                             Rectangle().fill(.background.opacity(0.35)).allowsHitTesting(true)
                             ProgressView("Checking generated game")
                                 .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -23,7 +24,7 @@ struct GenerationView: View {
                     } else if let session = model.session {
                         GameWebView(session: session)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .frame(minHeight: 360)
+                            .frame(height: gameHeight(in: geometry.size.height))
                         TextField("Change the game", text: $model.edit)
                             .focused($focusedField, equals: .edit)
                             .submitLabel(.done)
@@ -55,9 +56,10 @@ struct GenerationView: View {
             .textFieldStyle(.roundedBorder)
             .buttonStyle(.borderedProminent)
             .navigationTitle("Playloom")
-            .onChange(of: scenePhase) { _, phase in
-                if phase == .active { model.didBecomeActive() }
-                else if phase == .background { model.didEnterBackground() }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { model.didBecomeActive() }
+                    else if phase == .background { model.didEnterBackground() }
+                }
             }
         }
     }
@@ -67,6 +69,10 @@ struct GenerationView: View {
             HStack { if model.isWorking { ProgressView() }; Text(model.status).font(.headline) }
             if !model.detail.isEmpty { Text(model.detail).font(.footnote).foregroundStyle(.secondary) }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func gameHeight(in availableHeight: CGFloat) -> CGFloat {
+        max(360, availableHeight * 0.68)
     }
 
     private func dismissKeyboard() { focusedField = nil }
