@@ -9,6 +9,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
+      - name: Inject ephemeral live key into test app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$PLAYLOOM_OPENCODE_GO_KEY"
+          printf '%s' "$PLAYLOOM_OPENCODE_GO_KEY" > Playloom/Resources/live-smoke-key.txt
       - run: xcodegen generate
       - id: sim
         shell: bash
@@ -16,4 +22,5 @@ jobs:
           set -euo pipefail
           device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["name"] for runtime in d.values() for x in runtime if x["name"].startswith("iPhone")))')
           echo "device=$device" >> "$GITHUB_OUTPUT"
-      - run: xcodebuild test -project Playloom.xcodeproj -scheme Playloom -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.device }}' -only-testing:PlayloomTests/OpenCodeGoLiveSmokeTests/testOneRealGenerationPassesFullValidationLoop CODE_SIGNING_ALLOWED=NO
+      - name: Run exactly one live generation
+        run: xcodebuild test -project Playloom.xcodeproj -scheme Playloom -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.device }}' -only-testing:PlayloomTests/OpenCodeGoLiveSmokeTests/testOneRealGenerationPassesFullValidationLoop CODE_SIGNING_ALLOWED=NO
