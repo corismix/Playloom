@@ -25,11 +25,20 @@ final class ProjectWorkspace {
             let vendor = candidate.appending(path: "vendor", directoryHint: .isDirectory)
             try fileManager.createDirectory(at: vendor, withIntermediateDirectories: true)
             try fileManager.copyItem(at: phaser, to: vendor.appending(path: "phaser.min.js"))
+            try persistCIArtifactIfRequested(candidate)
             return candidate
         } catch {
             try? fileManager.removeItem(at: candidate)
             throw error
         }
+    }
+
+    private func persistCIArtifactIfRequested(_ candidate: URL) throws {
+        guard let artifactRoot = ProcessInfo.processInfo.environment["PLAYLOOM_ARTIFACT_DIR"], !artifactRoot.isEmpty else { return }
+        let root = URL(fileURLWithPath: artifactRoot, isDirectory: true)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        let destination = root.appending(path: candidate.lastPathComponent, directoryHint: .isDirectory)
+        try fileManager.copyItem(at: candidate, to: destination)
     }
 }
 

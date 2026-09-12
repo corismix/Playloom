@@ -11,6 +11,8 @@ permissions:
 jobs:
   build-and-test:
     runs-on: macos-26
+    env:
+      PLAYLOOM_ARTIFACT_DIR: ${{ github.workspace }}/generated-projects
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +34,14 @@ jobs:
           -scheme Playloom
           -destination 'platform=iOS Simulator,name=${{ steps.simulator.outputs.device }}'
           CODE_SIGNING_ALLOWED=NO
+      - name: Upload generated project directories
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-projects-${{ github.run_id }}
+          path: generated-projects
+          if-no-files-found: error
+          retention-days: 14
       - name: Prohibited-name and secret scan
         shell: bash
         run: |

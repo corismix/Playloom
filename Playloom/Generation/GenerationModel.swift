@@ -7,7 +7,7 @@ final class GenerationModel {
     var prompt = "Make a one-screen game where I dodge falling stars"
     var edit = "Make the player faster"
     var apiKey = ""
-    private(set) var status = "Add an OpenRouter key to begin"
+    private(set) var status = "Add an OpenCode Go key to begin"
     private(set) var isWorking = false
     private(set) var session: GameRuntimeSession?
     private(set) var project: GameProject?
@@ -16,15 +16,15 @@ final class GenerationModel {
     private let provider: ModelProvider
     private let workspace: ProjectWorkspace
 
-    init(keyStore: APIKeyStore = APIKeyStore(account: "openrouter"), provider: ModelProvider? = nil) {
+    init(keyStore: APIKeyStore = APIKeyStore(account: "opencode-go"), provider: ModelProvider? = nil) {
         self.keyStore = keyStore
-        self.provider = provider ?? OpenRouterProvider(keyStore: keyStore)
+        self.provider = provider ?? OpenCodeGoProvider(keyStore: keyStore)
         self.workspace = try! ProjectWorkspace()
         if (try? keyStore.read()) != nil { status = "Ready" }
     }
 
     func saveKey() {
-        do { try keyStore.save(apiKey); apiKey = ""; status = "OpenRouter key saved in Keychain" }
+        do { try keyStore.save(apiKey); apiKey = ""; status = "OpenCode Go key saved in Keychain" }
         catch { status = "Could not save key: \(error.localizedDescription)" }
     }
 

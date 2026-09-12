@@ -5,7 +5,9 @@ jobs:
   opencode-go:
     runs-on: macos-26
     timeout-minutes: 20
-    env: { PLAYLOOM_OPENCODE_GO_KEY: "${{ secrets.PLAYLOOM_OPENCODE_GO_KEY }}" }
+    env:
+      PLAYLOOM_OPENCODE_GO_KEY: "${{ secrets.PLAYLOOM_OPENCODE_GO_KEY }}"
+      PLAYLOOM_ARTIFACT_DIR: ${{ github.workspace }}/generated-projects
     steps:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
@@ -24,3 +26,11 @@ jobs:
           echo "device=$device" >> "$GITHUB_OUTPUT"
       - name: Run exactly one live generation
         run: xcodebuild test -project Playloom.xcodeproj -scheme Playloom -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.device }}' -only-testing:PlayloomTests/OpenCodeGoLiveSmokeTests/testOneRealGenerationPassesFullValidationLoop CODE_SIGNING_ALLOWED=NO
+      - name: Upload generated project directories
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-projects-${{ github.run_id }}
+          path: generated-projects
+          if-no-files-found: error
+          retention-days: 14
