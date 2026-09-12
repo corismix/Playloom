@@ -14,14 +14,14 @@ final class VerticalSliceTests: XCTestCase {
 
         XCTAssertEqual(model.project?.title, "First game")
         XCTAssertNotNil(model.session)
-        XCTAssertTrue(model.status.contains("6 checks passed"), model.status)
+        XCTAssertEqual(model.status, "Playable", model.detail)
 
         model.edit = "Make it faster and yellow"
         await model.applyEdit()
 
         XCTAssertEqual(model.project?.title, "Faster game")
         XCTAssertNotNil(model.session)
-        XCTAssertTrue(model.status.contains("6 checks passed"), model.status)
+        XCTAssertEqual(model.status, "Playable", model.detail)
         let requests = await provider.requests
         XCTAssertEqual(requests, ["generate:Make a dodge game", "edit:Make it faster and yellow"])
     }

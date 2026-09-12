@@ -12,6 +12,7 @@ final class RuntimeIntegrationTests: XCTestCase {
 
         XCTAssertTrue(report.isPassing, report.failures.joined(separator: ", "))
         XCTAssertEqual(Set(report.passed), Set([
+            "WebKit bridge ready",
             "loads",
             "no JavaScript crash",
             "canvas not blank",
