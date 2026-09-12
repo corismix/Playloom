@@ -66,7 +66,9 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
 
     func probeInput() async throws {
         guard let webView else { throw RuntimeSessionError.notStarted }
-        _ = try await webView.callAsyncJavaScript("window.playloomProbeInput()", arguments: [:], in: nil, contentWorld: .page)
+        _ = try? await webView.callAsyncJavaScript("window.playloomProbeInput?.()", arguments: [:], in: nil, contentWorld: .page)
+        if await waitFor({ $0 == .inputReceived }, timeout: .milliseconds(350)) { return }
+        _ = try await webView.callAsyncJavaScript(Self.touchPointerProbeScript, arguments: [:], in: nil, contentWorld: .page)
     }
 
     func sampleVisiblePixels() async throws -> PixelSample {
@@ -203,6 +205,23 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         contentProcessTerminations += 1
         events.append(.fatal("Web content process terminated"))
     }
+
+    // iOS hardware does not translate synthetic mouse events into touch input the way
+    // Simulator does. Dispatch the Pointer Events sequence WebKit gives Phaser for touch.
+    nonisolated private static let touchPointerProbeScript = #"""
+    (() => {
+      const target = document.querySelector('canvas') || document.querySelector('#game') || document.body;
+      const rect = target.getBoundingClientRect();
+      const x = rect.left + Math.max(1, rect.width / 2), y = rect.top + Math.max(1, rect.height / 2);
+      const common = {pointerId:937, pointerType:'touch', isPrimary:true, clientX:x, clientY:y,
+                      screenX:x, screenY:y, bubbles:true, composed:true, cancelable:true};
+      target.dispatchEvent(new PointerEvent('pointerdown', {...common, buttons:1, button:0, pressure:0.5}));
+      target.dispatchEvent(new PointerEvent('pointermove', {...common, clientX:x+8, buttons:1, button:0, pressure:0.5}));
+      target.dispatchEvent(new PointerEvent('pointerup', {...common, clientX:x+8, buttons:0, button:0, pressure:0}));
+      target.dispatchEvent(new MouseEvent('click', {clientX:x+8, clientY:y, bubbles:true, composed:true, cancelable:true}));
+      return true;
+    })()
+    """#
 
     // This check belongs to Playloom, not generated code. Accept a valid generated
     // probe for compatibility, then fall back to inspecting the Phaser canvas directly.
