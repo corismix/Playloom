@@ -1,6 +1,6 @@
 name: Playloom
 options:
-  bundleIdPrefix: io.github.corismix
+  bundleIdPrefix: dev.corismix
   deploymentTarget:
     iOS: "17.0"
   xcodeVersion: "26.0"
@@ -12,7 +12,7 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     CODE_SIGNING_ALLOWED: NO
-    PRODUCT_BUNDLE_IDENTIFIER: io.github.corismix.playloom
+    PRODUCT_BUNDLE_IDENTIFIER: dev.corismix.playloom
 targets:
   Playloom:
     type: application
@@ -39,7 +39,7 @@ targets:
       - target: Playloom
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: io.github.corismix.playloomTests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.corismix.playloomTests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Playloom.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Playloom"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:
