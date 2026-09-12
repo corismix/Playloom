@@ -13,6 +13,7 @@ final class GenerationModel {
     private(set) var isWorking = false
     private(set) var wasBackgroundedDuringGeneration = false
     private(set) var session: GameRuntimeSession?
+    private(set) var candidateSession: GameRuntimeSession?
     private(set) var project: GameProject?
     var apiKeyLabel: String { "\(provider.displayName) API key" }
 
@@ -56,22 +57,25 @@ final class GenerationModel {
         status = action
         detail = "Contacting \(provider.displayName). Keep Playloom open and unlocked; this can take several minutes."
         UIApplication.shared.isIdleTimerDisabled = true
-        defer { isWorking = false; UIApplication.shared.isIdleTimerDisabled = false }
+        defer { isWorking = false; candidateSession = nil; UIApplication.shared.isIdleTimerDisabled = false }
         do {
             let candidate = try await operation()
             status = "Staging generated files"; detail = "Checking project structure and copying the local Phaser runtime."
             let directory = try workspace.stage(candidate)
             status = "Starting game runtime"; detail = "Loading the candidate in a sandboxed WebKit view."
-            let candidateSession = GameRuntimeSession(projectDirectory: directory)
-            _ = candidateSession.makeWebView()
+            let checkingSession = GameRuntimeSession(projectDirectory: directory)
+            candidateSession = checkingSession
+            _ = checkingSession.makeWebView()
             status = "Running 6 safety checks"; detail = "Load, JavaScript, canvas, heartbeat, input, and restart."
-            let report = await UniversalRuntimeChecker().run(session: candidateSession)
+            // Yield so SwiftUI presents the candidate at full opacity before WebKit checks.
+            await Task.yield()
+            let report = await UniversalRuntimeChecker().run(session: checkingSession)
             guard report.isPassing else {
                 status = "Candidate rejected"
                 detail = report.failures.joined(separator: " | ")
                 return
             }
-            project = candidate; session = candidateSession
+            project = candidate; session = checkingSession
             status = "Playable"
             detail = "Passed: " + report.passed.joined(separator: ", ")
         } catch {

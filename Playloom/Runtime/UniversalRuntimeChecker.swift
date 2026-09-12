@@ -5,8 +5,6 @@ struct UniversalRuntimeChecker {
     func run(session: GameRuntimeSession) async -> RuntimeReport {
         var passed: [String] = []
         var failures: [String] = []
-        session.beginValidationPresentation()
-        defer { session.endValidationPresentation() }
 
         // The game-ready event itself proves the bridge. The document-start diagnostic
         // message can race with WebKit handler activation on newer OS versions, so retain

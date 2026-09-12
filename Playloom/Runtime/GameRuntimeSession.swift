@@ -12,8 +12,6 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     private(set) var navigationFinished = false
     private(set) var navigationError: String?
     private var webView: WKWebView?
-    private var validationWindow: UIWindow?
-    private var attachedForValidation = false
     private var entryURL: URL?
 
     override init() {
@@ -49,38 +47,6 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         webView = view
         loadFixture()
         return view
-    }
-
-    func beginValidationPresentation() {
-        let view = makeWebView()
-        guard view.superview == nil else { return }
-        attachedForValidation = true
-        view.isUserInteractionEnabled = false
-        view.alpha = 0.01
-        if let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: { $0.isKeyWindow }) {
-            // iOS 27 forbids inserting UIKit children inside UIHostingController.view.
-            // The UIWindow is the supported common ancestor above the hosting controller.
-            window.addSubview(view)
-        } else if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
-            let window = UIWindow(windowScene: scene)
-            let controller = UIViewController()
-            window.rootViewController = controller
-            window.frame = scene.screen.bounds
-            window.windowLevel = .normal - 1
-            window.isHidden = false
-            controller.view.addSubview(view)
-            validationWindow = window
-        }
-    }
-
-    func endValidationPresentation() {
-        guard attachedForValidation, let webView else { return }
-        webView.removeFromSuperview()
-        webView.alpha = 1
-        webView.isUserInteractionEnabled = true
-        validationWindow?.isHidden = true
-        validationWindow = nil
-        attachedForValidation = false
     }
 
     func loadFixture() {
@@ -145,8 +111,10 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         })()
         """#
         let page: String
-        do { page = try await webView.callAsyncJavaScript(javascript, arguments: [:], in: nil, contentWorld: .page) as? String ?? "non-string" }
-        catch { page = "snapshotError=\(error.localizedDescription)" }
+        do {
+            let value = try await webView.callAsyncJavaScript(javascript, arguments: [:], in: nil, contentWorld: .page)
+            page = value.map { String(describing: $0) } ?? "nil"
+        } catch { page = "snapshotError=\(error.localizedDescription)" }
         let heartbeatCount = events.reduce(into: 0) { count, event in if case .heartbeat = event { count += 1 } }
         let inputCount = events.filter { $0 == .inputReceived }.count
         let eventSummary = "events=\(events.count),heartbeats=\(heartbeatCount),inputs=\(inputCount),console=\(events.compactMap { if case let .console(level,message) = $0 { return "[\(level)] \(message)" }; return nil }.suffix(5))"

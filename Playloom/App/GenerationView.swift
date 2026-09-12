@@ -11,7 +11,16 @@ struct GenerationView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    if let session = model.session {
+                    if let checking = model.candidateSession {
+                        ZStack {
+                            GameWebView(session: checking)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                                .frame(minHeight: 360)
+                            Rectangle().fill(.background.opacity(0.35)).allowsHitTesting(true)
+                            ProgressView("Checking generated game")
+                                .padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        }
+                    } else if let session = model.session {
                         GameWebView(session: session)
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .frame(minHeight: 360)
