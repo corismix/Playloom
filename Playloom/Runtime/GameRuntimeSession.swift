@@ -128,7 +128,10 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
               }
             } catch(error) { directPixel=`throws:${error}`; }
           }
-          return JSON.stringify({readyState:document.readyState, url:location.href, canvas:canvas ? {width:canvas.width,height:canvas.height,clientWidth:canvas.clientWidth,clientHeight:canvas.clientHeight,rect:Array.from([canvas.getBoundingClientRect().x,canvas.getBoundingClientRect().y,canvas.getBoundingClientRect().width,canvas.getBoundingClientRect().height])} : null, generatedPixel, directPixel, probeType:typeof window.playloomProbeInput, restartType:typeof window.playloomRestart});
+          const probe = typeof window.playloomProbeInput === 'function'
+            ? String(window.playloomProbeInput).replace(/\s+/g, ' ').slice(0, 700)
+            : String(typeof window.playloomProbeInput);
+          return JSON.stringify({readyState:document.readyState, url:location.href, canvas:canvas ? {width:canvas.width,height:canvas.height,clientWidth:canvas.clientWidth,clientHeight:canvas.clientHeight,rect:Array.from([canvas.getBoundingClientRect().x,canvas.getBoundingClientRect().y,canvas.getBoundingClientRect().width,canvas.getBoundingClientRect().height])} : null, generatedPixel, directPixel, probeType:typeof window.playloomProbeInput, probeSource:probe, restartType:typeof window.playloomRestart, domListeners:window.__playloomDOMListeners || {}});
         })()
         """#
         let page: String
@@ -253,6 +256,16 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     nonisolated private static let errorCaptureScript = #"""
     (() => {
       const send = value => window.webkit.messageHandlers.playloom.postMessage(value);
+      const listenerCounts = Object.create(null);
+      const originalAdd = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function(type, listener, options) {
+        const target = this === window ? 'window' : this === document ? 'document'
+          : this instanceof Element ? `${this.tagName.toLowerCase()}${this.id ? '#' + this.id : ''}` : this.constructor?.name || 'target';
+        const key = `${target}:${String(type)}`;
+        listenerCounts[key] = (listenerCounts[key] || 0) + 1;
+        return originalAdd.call(this, type, listener, options);
+      };
+      Object.defineProperty(window, '__playloomDOMListeners', {value: listenerCounts, configurable: false});
       send({type:'bridge'});
       window.addEventListener('error', event => send({type:'fatal', message:String(event.message || 'JavaScript error')}));
       window.addEventListener('unhandledrejection', event => send({type:'fatal', message:String(event.reason || 'Unhandled rejection')}));
