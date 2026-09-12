@@ -48,6 +48,12 @@ struct UniversalRuntimeChecker {
             else { failures.append("restart failed") }
         } catch { failures.append("restart failed") }
 
+        if !failures.isEmpty {
+            let diagnostic = await session.diagnosticSnapshot()
+            print("PLAYLOOM_RUNTIME_DIAGNOSTIC \(diagnostic)")
+            failures.append("runtime diagnostic: " + diagnostic)
+        }
+
         let console = session.events.compactMap { event -> String? in
             if case .console(let level, let message) = event { return "[\(level)] \(message)" }
             return nil

@@ -120,6 +120,39 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         return PixelSample(changedRatio: ratio, width: width, height: height)
     }
 
+    func diagnosticSnapshot() async -> String {
+        guard let webView else { return "webView=missing" }
+        let hierarchy = "frame=\(webView.frame.debugDescription); superview=\(String(describing: type(of: webView.superview))); window=\(String(describing: type(of: webView.window))); hidden=\(webView.isHidden); alpha=\(webView.alpha)"
+        let javascript = #"""
+        (() => {
+          const canvas = document.querySelector('canvas');
+          let generatedPixel = 'missing';
+          try { generatedPixel = String(window.playloomPixelSampleText?.()); } catch (error) { generatedPixel = `throws:${error}`; }
+          let directPixel = 'unavailable';
+          if (canvas) {
+            try {
+              const context = canvas.getContext('2d', {willReadFrequently:true});
+              const width = Math.min(canvas.width, 128), height = Math.min(canvas.height, 128);
+              if (context && width && height) {
+                const data = context.getImageData(Math.max(0, (canvas.width-width)>>1), Math.max(0, (canvas.height-height)>>1), width, height).data;
+                let opaque=0, nonzero=0, min=255, max=0;
+                for (let i=0;i<data.length;i+=4) { if(data[i+3]) opaque++; if(data[i]||data[i+1]||data[i+2]) nonzero++; min=Math.min(min,data[i],data[i+1],data[i+2]); max=Math.max(max,data[i],data[i+1],data[i+2]); }
+                directPixel=`sample=${width}x${height},opaque=${opaque},nonzero=${nonzero},min=${min},max=${max}`;
+              }
+            } catch(error) { directPixel=`throws:${error}`; }
+          }
+          return JSON.stringify({readyState:document.readyState, url:location.href, canvas:canvas ? {width:canvas.width,height:canvas.height,clientWidth:canvas.clientWidth,clientHeight:canvas.clientHeight,rect:Array.from([canvas.getBoundingClientRect().x,canvas.getBoundingClientRect().y,canvas.getBoundingClientRect().width,canvas.getBoundingClientRect().height])} : null, generatedPixel, directPixel, probeType:typeof window.playloomProbeInput, restartType:typeof window.playloomRestart});
+        })()
+        """#
+        let page: String
+        do { page = try await webView.callAsyncJavaScript(javascript, arguments: [:], in: nil, contentWorld: .page) as? String ?? "non-string" }
+        catch { page = "snapshotError=\(error.localizedDescription)" }
+        let heartbeatCount = events.reduce(into: 0) { count, event in if case .heartbeat = event { count += 1 } }
+        let inputCount = events.filter { $0 == .inputReceived }.count
+        let eventSummary = "events=\(events.count),heartbeats=\(heartbeatCount),inputs=\(inputCount),console=\(events.compactMap { if case let .console(level,message) = $0 { return "[\(level)] \(message)" }; return nil }.suffix(5))"
+        return "\(startupDiagnostic); \(hierarchy); page=\(page); \(eventSummary)"
+    }
+
     func waitUntilNavigationBlocked(timeout: Duration) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
