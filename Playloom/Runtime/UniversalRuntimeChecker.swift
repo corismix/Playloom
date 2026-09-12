@@ -6,12 +6,12 @@ struct UniversalRuntimeChecker {
         var passed: [String] = []
         var failures: [String] = []
 
-        // The game-ready event itself proves the bridge. The document-start diagnostic
-        // message can race with WebKit handler activation on newer OS versions, so retain
-        // it as diagnostic metadata rather than making it a seventh acceptance check.
-        if await session.waitFor({ $0 == .bridgeReady || $0 == .ready }, timeout: .seconds(15)) { passed.append("WebKit bridge ready") }
-
-        if await session.waitFor({ $0 == .ready }, timeout: .seconds(15)) { passed.append("loads") }
+        // Wait once for game readiness. A generated ready event travels through the same
+        // script-message handler and therefore also proves the WebKit bridge. Keeping these
+        // labels separate preserves the report without creating two sequential timeout races.
+        let gameReady = await session.waitFor({ $0 == .ready }, timeout: .seconds(15))
+        if gameReady || session.events.contains(.bridgeReady) { passed.append("WebKit bridge ready") }
+        if gameReady { passed.append("loads") }
         else { failures.append("game ready timeout: " + session.startupDiagnostic) }
 
         let fatal = session.events.compactMap { event -> String? in
