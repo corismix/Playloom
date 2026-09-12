@@ -9,7 +9,7 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
     private struct State { var data = Data(); let continuation: CheckedContinuation<(Data, URLResponse), Error>; let bodyURL: URL }
     private let lock = NSLock()
     private var states: [Int: State] = [:]
-    private var backgroundCompletion: (@Sendable () -> Void)?
+    private var backgroundCompletion: (() -> Void)?
     private let sessionBox = SessionBox()
     private var session: URLSession {
         lock.withLock {
@@ -36,7 +36,7 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
         }
     }
 
-    func handleEvents(completion: @escaping @Sendable () -> Void) {
+    func handleEvents(completion: @escaping () -> Void) {
         lock.withLock { backgroundCompletion = completion }
     }
 
