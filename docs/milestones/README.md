@@ -1,10 +1,11 @@
 # Milestone Plan
 
-Milestones merge in sequence. Each one ends with its acceptance evidence and a green required GitHub Actions run on `main`. A later milestone cannot waive an earlier gate.
+Required milestones merge in sequence. M0X runs in parallel and never gates M1 or later stable-provider work. Each one ends with its acceptance evidence and a green required GitHub Actions run on `main`. A later milestone cannot waive an earlier gate.
 
 | Milestone | Outcome | Spec |
 |---|---|---|
-| 0 | Risk spike: ChatGPT auth, WebKit sandbox, Apple Guideline 4.7 | [M0](M0-risk-spike.md) |
+| 0 | Required risk spike: WebKit sandbox/instrumentation + lean Guideline 4.7 assessment | [M0](M0-risk-spike.md) |
+| 0X | Parallel non-gating experiment: device-direct ChatGPT/Codex OAuth | [M0X](M0X-chatgpt-experiment.md) |
 | 1 | Vertical slice: prompt → Phaser → checks → play → edit → patch/reload | [M1](M1-vertical-slice.md) |
 | 2 | Reliability: patch validation, two-layer checks, rollback, repair | [M2](M2-reliability.md) |
 | 3 | Projects: persistence, revisions, Files import/export | [M3](M3-projects.md) |

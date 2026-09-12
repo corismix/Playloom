@@ -112,13 +112,12 @@ The free baseline is procedural Phaser geometry/simple generated SVG where safe,
 
 ## Feasibility gates
 
-Before the vertical slice, Milestone 0 must answer three independent risks:
+Before the vertical slice, required Milestone 0 answers two risks:
 
 1. Can the required WebKit sandbox and runtime instrumentation work on target devices?
-2. How does App Store Review Guideline 4.7 classify generated/downloaded HTML5 mini-games, and what changes are needed to review, cataloging, safety, privacy, or runtime architecture?
-3. Can ChatGPT subscription OAuth/Codex access be ported device-direct safely? A negative answer drops only the experiment.
+2. Does the current App Store Guideline 4.7 create an obvious reason not to build the local slice now, or an architectural choice we would regret later? This is a lean go/change/stop assessment, not legal certainty.
 
-The 4.7 spike must record current requirements, classification uncertainty, architecture effects, and a release recommendation. Public distribution does not proceed on an assumption.
+Milestone 0X may test ChatGPT subscription OAuth/Codex access in parallel. M1 never depends on it, and a negative result only drops the experiment. Public distribution still gets a fuller current review in the final sharing/App Store milestone.
 
 ## Success measures
 
