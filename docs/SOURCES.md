@@ -16,6 +16,8 @@ Primary references used to shape the specification. These links are constraints 
 | OpenRouter | [OpenRouter API reference](https://openrouter.ai/docs/api-reference/overview) | Catch-all model adapter and catalog |
 | Phaser | [Phaser documentation](https://docs.phaser.io/) | Web game runtime and renderer APIs |
 | Phaser snapshots | [Phaser renderer snapshot API](https://docs.phaser.io/api-documentation/namespace/renderer-snapshot) | WebGL/canvas capture fallback for self-checking |
+| Iterative self-repair | [How Many Tries Does It Take?](https://arxiv.org/abs/2604.10508) | Two-round recovery bound and model-capability evidence |
+| Blind resampling | [Try Again, Don’t Look Back](https://arxiv.org/abs/2607.26117) | Avoid self-conditioning for logic/behavior failures, especially on weaker models |
 
 ## Known uncertainty
 

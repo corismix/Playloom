@@ -108,7 +108,7 @@ Two layers stay explicit:
 - required entities/transitions appear;
 - planned win/lose/progression behavior is observable.
 
-A game plan cannot disable the universal floor. The vertical slice lands the universal checks first; the reliability milestone adds richer plan-generated assertions and bounded repair.
+A game plan cannot disable the universal floor. The vertical slice lands the universal checks first; the reliability milestone adds richer plan-generated assertions and bounded, failure-classified recovery per ADR-008.
 
 ### Assets
 

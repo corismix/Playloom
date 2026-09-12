@@ -88,7 +88,7 @@ Game-specific checks come from the structured game plan and vary by game:
 - expected entities appear or transitions occur;
 - win, lose, reset, or progression rules produce observable state.
 
-Game-specific checks may refine acceptance but cannot weaken the universal floor. Early vertical-slice candidates may have only the universal set. Reliability work adds the plan-generated set and bounded repair packets.
+Game-specific checks may refine acceptance but cannot weaken the universal floor. Early vertical-slice candidates may have only the universal set. Reliability work adds the plan-generated set and bounded failure-classified recovery: diagnostic repair packets for structural/crash evidence and blind resampling for logic/behavior failures.
 
 ### Projects and storage
 

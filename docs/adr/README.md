@@ -7,3 +7,4 @@
 - [ADR-005: One target before packages](005-one-target.md)
 - [ADR-006: App-private storage is canonical](006-app-private-canonical.md)
 - [ADR-007: Permissive app and template licensing](007-permissive-licensing.md)
+- [ADR-008: Diagnostic repair and blind resampling](008-diagnostic-repair-and-blind-resampling.md)
