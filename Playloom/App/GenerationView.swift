@@ -16,7 +16,7 @@ struct GenerationView: View {
                     Spacer()
                     Text("Describe a small game").font(.title2.bold())
                     TextField("Game prompt", text: $model.prompt, axis: .vertical).lineLimit(3...6)
-                    SecureField("OpenCode Go API key", text: $model.apiKey)
+                    SecureField(model.apiKeyLabel, text: $model.apiKey)
                     Button("Save key") { model.saveKey() }.disabled(model.apiKey.isEmpty)
                     Button("Generate game") { Task { await model.generate() } }.buttonStyle(.borderedProminent).disabled(model.isWorking)
                     Spacer()

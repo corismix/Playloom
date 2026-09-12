@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
+    let displayName = "OpenCode Go"
     private let keyStore: APIKeyStoring
     private let session: URLSession
     private let model: String

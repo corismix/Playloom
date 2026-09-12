@@ -41,6 +41,7 @@ final class VerticalSliceTests: XCTestCase {
 }
 
 private actor FakeModelProvider: ModelProvider {
+    nonisolated let displayName = "Test Provider"
     let initial: GameProject
     let edited: GameProject
     private(set) var requests: [String] = []

@@ -11,6 +11,7 @@ final class GenerationModel {
     private(set) var isWorking = false
     private(set) var session: GameRuntimeSession?
     private(set) var project: GameProject?
+    var apiKeyLabel: String { "\(provider.displayName) API key" }
 
     private let keyStore: APIKeyStore
     private let provider: ModelProvider

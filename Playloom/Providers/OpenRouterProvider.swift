@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated final class OpenRouterProvider: ModelProvider, Sendable {
+    let displayName = "OpenRouter"
     private let keyStore: APIKeyStoring
     private let session: URLSession
     private let model: String
