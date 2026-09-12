@@ -6,8 +6,11 @@ struct UniversalRuntimeChecker {
         var passed: [String] = []
         var failures: [String] = []
 
+        if await session.waitFor({ $0 == .bridgeReady }, timeout: .seconds(15)) { passed.append("WebKit bridge ready") }
+        else { failures.append("WebKit startup failed: " + session.startupDiagnostic) }
+
         if await session.waitFor({ $0 == .ready }, timeout: .seconds(15)) { passed.append("loads") }
-        else { failures.append("load timeout") }
+        else { failures.append("game ready timeout: " + session.startupDiagnostic) }
 
         let fatal = session.events.compactMap { event -> String? in
             if case .fatal(let message) = event { return message }

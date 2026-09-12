@@ -7,6 +7,10 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     private(set) var events: [RuntimeEvent] = []
     private(set) var blockedNavigations: [URL] = []
     private(set) var contentProcessTerminations = 0
+    private(set) var navigationStarted = false
+    private(set) var navigationCommitted = false
+    private(set) var navigationFinished = false
+    private(set) var navigationError: String?
     private var webView: WKWebView?
     private var entryURL: URL?
 
@@ -34,7 +38,9 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         configuration.preferences.isElementFullscreenEnabled = false
         configuration.mediaTypesRequiringUserActionForPlayback = .all
 
-        let view = WKWebView(frame: .zero, configuration: configuration)
+        // Phaser sizes itself from the viewport during boot. A zero-sized, unattached
+        // validation view can stay throttled on physical devices, so validate at a real viewport.
+        let view = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
         view.navigationDelegate = self
         view.isInspectable = false
         view.scrollView.bounces = false
@@ -49,6 +55,7 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
             return
         }
         events.removeAll()
+        navigationStarted = false; navigationCommitted = false; navigationFinished = false; navigationError = nil
         webView.loadFileURL(entryURL, allowingReadAccessTo: entryURL.deletingLastPathComponent())
     }
 
@@ -104,6 +111,18 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         events.append(event)
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { navigationStarted = true }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { navigationCommitted = true }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { navigationFinished = true }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { navigationError = error.localizedDescription }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { navigationError = error.localizedDescription }
+
+    var startupDiagnostic: String {
+        let bridge = events.contains(.bridgeReady)
+        let ready = events.contains(.ready)
+        return "stage=webview; navigation(started=\(navigationStarted),committed=\(navigationCommitted),finished=\(navigationFinished)); bridge=\(bridge); gameReady=\(ready); processTerminations=\(contentProcessTerminations); navigationError=\(navigationError ?? "none")"
+    }
+
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
@@ -151,6 +170,7 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     nonisolated private static let errorCaptureScript = #"""
     (() => {
       const send = value => window.webkit.messageHandlers.playloom.postMessage(value);
+      send({type:'bridge'});
       window.addEventListener('error', event => send({type:'fatal', message:String(event.message || 'JavaScript error')}));
       window.addEventListener('unhandledrejection', event => send({type:'fatal', message:String(event.reason || 'Unhandled rejection')}));
       for (const level of ['error','warn']) {

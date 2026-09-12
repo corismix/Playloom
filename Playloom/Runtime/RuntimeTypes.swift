@@ -1,6 +1,7 @@
 import Foundation
 
 nonisolated enum RuntimeEvent: Equatable, Sendable {
+    case bridgeReady
     case ready
     case heartbeat(Int)
     case inputReceived
@@ -11,6 +12,7 @@ nonisolated enum RuntimeEvent: Equatable, Sendable {
     init?(message: Any) {
         guard let value = message as? [String: Any], let type = value["type"] as? String else { return nil }
         switch type {
+        case "bridge": self = .bridgeReady
         case "ready": self = .ready
         case "heartbeat": self = .heartbeat(value["frame"] as? Int ?? 0)
         case "input": self = .inputReceived
