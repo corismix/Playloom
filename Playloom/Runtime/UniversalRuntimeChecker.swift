@@ -5,6 +5,8 @@ struct UniversalRuntimeChecker {
     func run(session: GameRuntimeSession) async -> RuntimeReport {
         var passed: [String] = []
         var failures: [String] = []
+        session.beginValidationPresentation()
+        defer { session.endValidationPresentation() }
 
         if await session.waitFor({ $0 == .bridgeReady }, timeout: .seconds(15)) { passed.append("WebKit bridge ready") }
         else { failures.append("WebKit startup failed: " + session.startupDiagnostic) }

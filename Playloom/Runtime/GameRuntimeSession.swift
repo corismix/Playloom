@@ -12,6 +12,8 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     private(set) var navigationFinished = false
     private(set) var navigationError: String?
     private var webView: WKWebView?
+    private var validationWindow: UIWindow?
+    private var attachedForValidation = false
     private var entryURL: URL?
 
     override init() {
@@ -47,6 +49,36 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         webView = view
         loadFixture()
         return view
+    }
+
+    func beginValidationPresentation() {
+        let view = makeWebView()
+        guard view.superview == nil else { return }
+        attachedForValidation = true
+        view.isUserInteractionEnabled = false
+        view.alpha = 0.01
+        if let host = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).flatMap(\.windows).first(where: { $0.isKeyWindow })?.rootViewController?.view {
+            host.addSubview(view)
+        } else if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+            let window = UIWindow(windowScene: scene)
+            let controller = UIViewController()
+            window.rootViewController = controller
+            window.frame = scene.screen.bounds
+            window.windowLevel = .normal - 1
+            window.isHidden = false
+            controller.view.addSubview(view)
+            validationWindow = window
+        }
+    }
+
+    func endValidationPresentation() {
+        guard attachedForValidation, let webView else { return }
+        webView.removeFromSuperview()
+        webView.alpha = 1
+        webView.isUserInteractionEnabled = true
+        validationWindow?.isHidden = true
+        validationWindow = nil
+        attachedForValidation = false
     }
 
     func loadFixture() {
