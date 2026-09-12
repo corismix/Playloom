@@ -11,5 +11,9 @@ jobs:
       - run: brew install xcodegen
       - run: xcodegen generate
       - id: sim
-        run: echo "device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys;d=json.load(sys.stdin)[\"devices\"];print(next(x[\"name\"] for r in d.values() for x in r if x[\"name\"].startswith(\"iPhone\")))')" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          set -euo pipefail
+          device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["name"] for runtime in d.values() for x in runtime if x["name"].startswith("iPhone")))')
+          echo "device=$device" >> "$GITHUB_OUTPUT"
       - run: xcodebuild test -project Playloom.xcodeproj -scheme Playloom -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.device }}' -only-testing:PlayloomTests/OpenCodeGoLiveSmokeTests/testOneRealGenerationPassesFullValidationLoop CODE_SIGNING_ALLOWED=NO
