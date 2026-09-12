@@ -18,3 +18,9 @@ Official source reviewed: https://developer.apple.com/app-store/review/guideline
 ## Verification plan
 
 Required CI compiles the app and unit tests on a pinned macOS runner. Simulator integration must prove all six checks against the bundled fixture plus failure fixtures. A physical iPhone/iPad pass should confirm touch input, WebGL/canvas rendering, process recovery, orientation, and energy behavior before M0 is finally closed.
+
+## OpenCode Go client identity note
+
+OpenCode Go's current "Where can I use it?" contract allows OpenCode and other coding agents producing similar traffic. A client must identify itself with its own user agent and send a stable `x-opencode-session` value for each conversation. Playloom maps that value to one generated opaque identifier retained by the provider instance for the project conversation; it sends no account identity in the header.
+
+Source reviewed: https://opencode.ai/docs/go/#where-can-i-use-it

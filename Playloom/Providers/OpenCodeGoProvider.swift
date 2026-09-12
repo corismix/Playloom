@@ -1,8 +1,8 @@
 import Foundation
 
 nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
-    private let keyStore: APIKeyStoring; private let session: URLSession; private let model: String
-    init(keyStore: APIKeyStoring, session: URLSession = .shared, model: String = "deepseek-v4.1-flash") { self.keyStore=keyStore; self.session=session; self.model=model }
+    private let keyStore: APIKeyStoring; private let session: URLSession; private let model: String; private let conversationID: String
+    init(keyStore: APIKeyStoring, session: URLSession = .shared, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString) { self.keyStore=keyStore; self.session=session; self.model=model; self.conversationID=conversationID }
     func generateProject(prompt: String) async throws -> GameProject { try await request(user: prompt) }
     func editProject(_ project: GameProject, instruction: String) async throws -> GameProject {
         let data=try JSONEncoder().encode(project); guard let json=String(data:data,encoding:.utf8) else { throw ProviderError.invalidProject }
@@ -12,6 +12,7 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
         guard let key=try keyStore.read() else { throw ProviderError.missingKey }
         var req=URLRequest(url:URL(string:"https://opencode.ai/zen/go/v1/chat/completions")!); req.httpMethod="POST"
         req.setValue("Bearer \(key)",forHTTPHeaderField:"Authorization"); req.setValue("application/json",forHTTPHeaderField:"Content-Type")
+        req.setValue("playloom-ios/0.1",forHTTPHeaderField:"User-Agent"); req.setValue(conversationID,forHTTPHeaderField:"x-opencode-session")
         req.httpBody=try JSONEncoder().encode(Request(model:model,messages:[.init(role:"system",content:Self.prompt),.init(role:"user",content:user)]))
         let (data,response)=try await session.data(for:req)
         guard let http=response as? HTTPURLResponse else { throw OpenCodeGoError.invalidResponse }
