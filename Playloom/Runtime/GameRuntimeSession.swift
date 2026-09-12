@@ -59,12 +59,9 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
 
     func samplePixels() async throws -> PixelSample {
         guard let webView else { throw RuntimeSessionError.notStarted }
-        let raw = try await webView.callAsyncJavaScript("window.playloomPixelSample()", arguments: [:], in: nil, contentWorld: .page)
-        guard let result = raw as? [String: Any],
-              let ratio = result["changedRatio"] as? NSNumber,
-              let width = result["width"] as? NSNumber,
-              let height = result["height"] as? NSNumber else { throw RuntimeSessionError.badPixelSample }
-        return PixelSample(changedRatio: ratio.doubleValue, width: width.intValue, height: height.intValue)
+        let raw = try await webView.callAsyncJavaScript("JSON.stringify(window.playloomPixelSample())", arguments: [:], in: nil, contentWorld: .page)
+        guard let json = raw as? String, let data = json.data(using: .utf8) else { throw RuntimeSessionError.badPixelSample }
+        return try JSONDecoder().decode(PixelSample.self, from: data)
     }
 
     func waitUntilNavigationBlocked(timeout: Duration) async -> Bool {

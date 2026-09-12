@@ -29,7 +29,7 @@ nonisolated struct RuntimeReport: Equatable, Sendable {
     var isPassing: Bool { failures.isEmpty }
 }
 
-nonisolated struct PixelSample: Equatable, Sendable {
+nonisolated struct PixelSample: Codable, Equatable, Sendable {
     let changedRatio: Double
     let width: Int
     let height: Int
