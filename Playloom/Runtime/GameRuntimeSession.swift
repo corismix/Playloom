@@ -66,6 +66,16 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         return PixelSample(changedRatio: ratio, width: width, height: height)
     }
 
+    func waitUntilNavigationBlocked(timeout: Duration) async -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            if !blockedNavigations.isEmpty { return true }
+            try? await clock.sleep(for: .milliseconds(25))
+        }
+        return !blockedNavigations.isEmpty
+    }
+
     func waitFor(_ predicate: @escaping (RuntimeEvent) -> Bool, timeout: Duration) async -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
