@@ -1,0 +1,47 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prohibited-name and secret-like string check
+        shell: bash
+        run: |
+          set -euo pipefail
+          prohibited_name=$(printf '\x63\x61\x73\x65\x79')
+          if grep -RniE --exclude-dir=.git "$prohibited_name" .; then
+            echo 'Prohibited legal name found.' >&2
+            exit 1
+          fi
+          if grep -RniE --exclude-dir=.git '(sk-[A-Za-z0-9_-]{16,}|Bearer[[:space:]]+[A-Za-z0-9._-]{16,})' .; then
+            echo 'Secret-like string found.' >&2
+            exit 1
+          fi
+      - name: Validate documentation links and required files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f README.md
+          test -f docs/PRODUCT_SPEC.md
+          test -f docs/ARCHITECTURE.md
+          test -f docs/SECURITY.md
+          test -f docs/PROJECT_FORMAT.md
+          test -f docs/milestones/README.md
+          for target in $(grep -RhoE '\]\(([^)#]+\.md)\)' README.md docs | sed -E 's/^\]\((.*)\)$/\1/' | sort -u); do
+            case "$target" in
+              http://*|https://*) continue ;;
+            esac
+            if ! find . -path "*/$target" -o -path "./$target" | grep -q .; then
+              echo "Missing Markdown target: $target" >&2
+              exit 1
+            fi
+          done
