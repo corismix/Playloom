@@ -48,7 +48,8 @@ extension RuntimeIntegrationTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let session = GameRuntimeSession(projectDirectory: directory)
         _ = session.makeWebView()
-        XCTAssertTrue(await session.waitFor({ $0 == .ready }, timeout: .seconds(5)))
+        let loaded = await session.waitFor({ $0 == .ready }, timeout: .seconds(5))
+        XCTAssertTrue(loaded)
         let sample = try await session.samplePixels()
         XCTAssertTrue(sample.isNonBlank)
         XCTAssertEqual(sample.width, 320)
