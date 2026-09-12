@@ -1,0 +1,15 @@
+name: live-smoke
+on: { workflow_dispatch: {} }
+permissions: { contents: read }
+jobs:
+  opencode-go:
+    runs-on: macos-26
+    timeout-minutes: 20
+    env: { PLAYLOOM_OPENCODE_GO_KEY: "${{ secrets.PLAYLOOM_OPENCODE_GO_KEY }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - id: sim
+        run: echo "device=$(xcrun simctl list devices available -j | python3 -c 'import json,sys;d=json.load(sys.stdin)[\"devices\"];print(next(x[\"name\"] for r in d.values() for x in r if x[\"name\"].startswith(\"iPhone\")))')" >> "$GITHUB_OUTPUT"
+      - run: xcodebuild test -project Playloom.xcodeproj -scheme Playloom -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.device }}' -only-testing:PlayloomTests/OpenCodeGoLiveSmokeTests/testOneRealGenerationPassesFullValidationLoop CODE_SIGNING_ALLOWED=NO
