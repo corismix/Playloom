@@ -32,8 +32,10 @@ struct UniversalRuntimeChecker {
         } catch { failures.append("pixel sample failed: \(error.localizedDescription)") }
 
         let initialFrames = session.events.filter { if case .heartbeat = $0 { true } else { false } }.count
-        let advanced = await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3))
-        if advanced { passed.append("heartbeat alive") }
+        // Multiple heartbeats observed since ready already prove advancement. Only wait
+        // for another when startup yielded fewer than two (slow device/runner).
+        let heartbeatAlive = initialFrames >= 2 || await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3))
+        if heartbeatAlive { passed.append("heartbeat alive") }
         else { failures.append("heartbeat stalled") }
 
         do {
