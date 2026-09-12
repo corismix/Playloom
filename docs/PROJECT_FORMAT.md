@@ -1,10 +1,16 @@
 # Portable Game Project Format
 
-## Goals
+## Storage rule
 
-A project is readable, versioned, deterministic to package, and playable as static web content. It contains no Playloom credential and does not require a Playloom account.
+Playloom's app-private container is canonical in v1. Files is a transport boundary only:
 
-## Proposed v1 layout
+- import copies and validates a project into app storage;
+- export writes an immutable snapshot;
+- Playloom never treats a Files folder as live state or edits it in place.
+
+This keeps atomic revisions and rollback under app control while retaining portability.
+
+## Proposed layout
 
 ```text
 MyGame.playloom/
@@ -13,55 +19,55 @@ MyGame.playloom/
 │   ├── index.html
 │   ├── game.js
 │   ├── styles.css
-│   └── vendor/
-│       └── phaser.min.js
+│   └── vendor/phaser.min.js
 ├── assets/
 │   ├── manifest.json
-│   ├── sprites/
-│   ├── audio/
-│   └── fonts/
+│   └── images/
 ├── tests/
-│   └── assertions.json
-├── revisions/
-│   └── index.json
-└── .playloom/
-    ├── chat.jsonl
-    └── runs/
+│   ├── universal-version.json
+│   └── game-assertions.json
+└── export-notices/
+    ├── TEMPLATE-LICENSE
+    └── THIRD-PARTY-NOTICES
 ```
 
-The export profile may omit `.playloom`, revision bodies, chat, and run evidence. A source archive can include them after a separate privacy preview.
+Chat, run reports, candidate journals, full revision bodies, provider aliases, and other private authoring state remain in app storage and are excluded by default.
 
 ## `playloom.json`
 
 Required fields:
 
 - `formatVersion`
-- `projectID` (random, non-account identifier)
+- `projectID` (random local identifier)
 - `title`
-- `runtime`: `phaser` or `canvas`
+- `runtime` (`phaser` in v1)
 - `runtimeVersion`
 - `entrypoint`
-- `orientation`
-- `viewport`
+- `orientation` and `viewport`
 - `controls`
 - `assetManifest`
-- `assertions`
+- `gameAssertions`
 - `createdAt` and `updatedAt`
 
-Optional fields include description, author alias, accessibility notes, approved network origins, template identity, and engine metadata. Unknown fields are preserved where safe. A major format version is never upgraded in place without a new revision.
+Unknown safe fields are preserved. A major format change creates a migrated revision rather than rewriting the only copy.
 
-## Asset manifest
+## Runtime checks
 
-Each logical asset records its stable ID, path, media type, dimensions/duration, cryptographic digest, source (`imagePlayground`, provider, imported, generatedShape), generation prompt if the user elects to retain it, and license/provenance note. Runtime code refers to logical IDs, allowing one asset to be regenerated without rewriting unrelated source.
+Universal checks are defined by the app/runtime version and cannot be disabled by project data: load, no JavaScript crash, non-blank canvas, heartbeat, input, and restart.
 
-## Assertions
+`tests/game-assertions.json` contains constrained, game-specific observations derived from the game plan, such as movement, score/state change, entity presence, or transitions. It is data interpreted by the test harness, not native code and not authority to weaken universal checks.
 
-`tests/assertions.json` declares observable facts such as boot timeout, ready signal, minimum non-background pixel ratio, entities expected, permitted initial stillness, motion/state deltas, and restart behavior. Assertions are constrained data interpreted by Playloom and a bundled JS harness, not arbitrary native scripts.
+## Revisions
 
-## Revision model
+Canonical app storage records immutable revisions with parent, changed digests, instruction summary, check results, and timestamps. The current pointer names only a passing revision. Candidate state is staged separately. Exports are snapshots, not revision peers.
 
-A revision is immutable after evaluation. Metadata records parent revision, instruction summary, changed file digests, provider/model aliases, run result, and timestamps. Raw credentials and authorization headers are forbidden. `current` points only to a passing revision; candidate state lives outside the canonical export.
+## Assets and licenses
 
-## Static build profile
+Assets use stable IDs, paths, media types, dimensions, digests, origins, and provenance notes. Playloom-authored runtime/export templates are MIT or explicitly CC0 licensed. Phaser and other dependencies retain their own notices. User/imported/generated assets are not relicensed by Playloom.
 
-The share bundle contains only the entrypoint, approved source, normalized assets, vendored runtime, and a small generated metadata file. It excludes chat, run logs, revisions, provider metadata, private prompts, and credential aliases. The build must run from a static origin with no Playloom API.
+## Export profiles
+
+- **Source snapshot:** portable game source, normalized assets, tests, template license, and third-party notices.
+- **Playable snapshot:** only files needed to run plus required notices.
+
+Neither profile includes credentials, OAuth tokens, private chat, run logs, candidate journals, device paths, or app-only provider metadata. Public-host packaging is postponed to the final sharing/App Store milestone.

@@ -1,15 +1,15 @@
-# ADR-001: Native shell with a web game runtime
+# ADR-001: Native shell with a Phaser runtime
 
 - Status: accepted
 
 ## Decision
 
-Use SwiftUI for the iPhone/iPad product shell and run generated games as local HTML/JavaScript in a sandboxed `WKWebView`, using Phaser or plain Canvas.
+Use SwiftUI for the iPhone/iPad shell and run generated Phaser HTML/JavaScript projects in a sandboxed local `WKWebView`. Plain Canvas is outside v1.
 
 ## Why
 
-Web projects are fast to generate, easy to inspect, and portable outside Playloom. A native shell gives first-class project, credential, sharing, and device UI without compiling model-produced native code.
+One runtime narrows templates, validation, instrumentation, and debugging enough to prove the complete loop. Web projects remain inspectable and portable without compiling model-produced native code.
 
 ## Consequences
 
-The web/native bridge and sandbox are security-critical. Touch input, lifecycle, audio, snapshots, WebGL behavior, and App Store review need explicit tests. A future SpriteKit interpreter consumes declarative `game.json`; it never compiles generated Swift.
+The WebKit bridge/sandbox and App Store Guideline 4.7 are Milestone 0 risks. Phaser is pinned and vendored. A later SpriteKit interpreter may consume declarative `game.json`; it never compiles generated Swift.

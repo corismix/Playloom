@@ -1,151 +1,133 @@
 # Architecture Map
 
-## System boundary
+## v1 system boundary
 
 ```text
-┌──────────────────────────────── iPhone / iPad ────────────────────────────────┐
-│ SwiftUI app                                                                  │
-│                                                                              │
-│  Project UI ── Generation Orchestrator ── Provider Registry                  │
-│      │                  │                    │                                │
-│      │                  │                    ├─ ChatGPT OAuth/Codex           │
-│      │                  │                    ├─ OpenAI API                    │
-│      │                  │                    ├─ OpenRouter                    │
-│      │                  │                    └─ OpenCode Go                   │
-│      │                  │                                                     │
-│      │                  ├─ Patch Validator ── Revision Store                 │
-│      │                  ├─ Asset Pipeline ─── Image Playground/image model   │
-│      │                  └─ Evaluation Loop                                   │
-│      │                              │                                         │
-│      └────────────────── Game Runtime (sandboxed WKWebView)                  │
-│                                     │                                        │
-│                    console / assertions / pixel sample / snapshot            │
-│                                                                              │
-│  Files app project folders             iOS Keychain (secrets and tokens)     │
-└──────────────────────────────────────────────────────────────────────────────┘
-                 │ selected provider HTTPS             │ explicit publish
-                 ▼                                     ▼
-       Provider-owned endpoints              Thin static bundle host
-                                             (optional, no model proxy)
+┌──────────────────────────── iPhone / iPad ────────────────────────────┐
+│ One SwiftUI app target                                                │
+│                                                                       │
+│ App UI ── Generation coordinator ── Provider registry                 │
+│   │              │                     ├─ OpenRouter key              │
+│   │              │                     ├─ OpenAI key                  │
+│   │              │                     ├─ OpenCode Go key             │
+│   │              │                     └─ ChatGPT experiment          │
+│   │              │                                                   │
+│   │              ├─ Patch validation ── App-private project store    │
+│   │              └─ Runtime checks                                  │
+│   │                          │                                        │
+│   └──────────── sandboxed WKWebView + vendored Phaser                │
+│                              │                                        │
+│             console / heartbeat / pixels / input / assertions         │
+│                                                                       │
+│ Files import/export only             iOS Keychain                    │
+└───────────────────────────────────────────────────────────────────────┘
+                 │ direct HTTPS to selected provider
+                 ▼
+          Provider-owned endpoint
 ```
 
-## Modules
+There is no Playloom backend in v1. Public static sharing and vision evaluation are later work.
 
-### AppShell
+## Source organization
 
-SwiftUI navigation, project library, chat, provider settings, run reports, previews, import/export, publish confirmation, and accessibility. AppShell owns presentation state but not secrets or project mutation.
-
-### ProjectStore
-
-Owns canonical project folders, manifests, revision metadata, atomic staging, rollback, and import/export. A candidate patch is written to a staging revision; only a passing revision becomes `current`.
-
-### GenerationOrchestrator
-
-Runs a state machine:
+Start with one app target. Clean folders and protocols provide boundaries without premature package or target overhead:
 
 ```text
-idle → planning → generating patch → validating → building assets
-     → launching → programmatic checks → optional vision review
-     → accepted | repairing (bounded) | failed/rolled back
+Playloom/
+├── App/          SwiftUI entry, navigation, feature composition
+├── Projects/     canonical app-private storage, formats, revisions, import/export
+├── Providers/    credentials, adapters, normalized provider events
+├── Runtime/      WKWebView sandbox, bridge, Phaser host, checks
+├── Generation/   plans, prompts, typed patches, orchestration, repair
+└── Assets/       manifests, procedural assets, imported images, later generators
 ```
 
-The state, attempt count, request identifier, selected models, and candidate revision are persisted so app termination cannot silently accept half-finished work.
+Tests mirror these folders. Split a package or target only when there is a measured build, reuse, isolation, or ownership benefit.
 
-### ProviderKit
+## Core responsibilities
+
+### App
+
+SwiftUI library, chat, preview, provider settings, check reports, import/export, and accessibility. It owns presentation, not raw credentials or project mutation.
+
+### Projects
+
+The app-private container is canonical. Imports copy and validate external content into a new local project. Exports write an immutable snapshot. Live editing of a Files location is forbidden in v1 because coordination, security-scoped URLs, partial writes, and external edits would weaken revision guarantees.
+
+Candidate changes stage separately. Reliability and projects milestones add atomic promotion, immutable revision metadata, and rollback.
+
+### Providers
 
 ```swift
 protocol CredentialProvider {
-    var kind: CredentialKind { get }       // subscription | apiKey
-    func authorization() async throws -> ProviderAuthorization
+    var kind: CredentialKind { get } // apiKey | experimentalSubscription
+    func authorize(_ request: URLRequest) async throws -> URLRequest
     func disconnect() async throws
 }
 
 protocol ModelProvider {
     func capabilities() async throws -> ProviderCapabilities
-    func generate(_ request: GenerationRequest) -> AsyncThrowingStream<GenerationEvent, Error>
-    func generateImage(_ request: ImageRequest) async throws -> ImageResult
+    func generate(_ request: GenerationRequest)
+      -> AsyncThrowingStream<GenerationEvent, Error>
 }
 ```
 
-The interfaces are illustrative, not frozen API. `ProviderAuthorization` is an opaque request signer or short-lived bearer view. Callers never receive refresh tokens or raw stored API keys. Model, endpoint, capability, and credential type are separate values.
+Interfaces are illustrative. Persistent secrets stay behind the credential object. Stable adapters are OpenRouter, OpenAI, and OpenCode Go. The ChatGPT adapter is experimental and compiled/flagged so it can be absent without affecting projects or stable providers.
 
-Adapters shipped in v1:
+### Generation
 
-- `ChatGPTSubscriptionProvider`: ASWebAuthenticationSession, Authorization Code + PKCE, device-side token exchange and refresh, account metadata, Codex backend transport.
-- `OpenAIProvider`: OpenAI API key and current supported generation endpoint.
-- `OpenRouterProvider`: OpenRouter API key, model catalog, normalized request/response handling.
-- `OpenCodeGoProvider`: OpenCode Go API key and direct provider endpoint.
+The vertical-slice state machine is intentionally short:
 
-Provider responses normalize text deltas, structured content, tool/patch payloads, usage, finish reason, provider request ID, and errors. Raw provider payloads are debug-only, redacted, and never included in projects.
+```text
+idle → plan → generate Phaser project → validate → launch → universal checks
+     → accepted → chat edit → generate patch → validate → reload → checks
+     → accepted | failed (keep prior passing state)
+```
 
-### PatchValidator
+Reliability extends it with staged revisions, bounded repair, rollback, and crash recovery. The model proposes typed operations against an allowlist; it never owns the filesystem.
 
-The model proposes operations against a typed allowlist: create/replace/delete file, update manifest, and declare assets. Validation rejects absolute paths, traversal, symbolic links, oversized files, forbidden file types, secret-like content, disallowed network origins, and changes outside the candidate revision. A deterministic parser checks the project and JavaScript before launch.
+### Runtime
 
-### GameRuntime
+A project-scoped `WKWebView` loads only staged local content and a vendored Phaser build. The bridge is small and typed. Generated code receives no credentials, provider headers, arbitrary native calls, sensors, or cross-project paths. Navigation, popups, downloads, and undeclared network access are denied.
 
-One ephemeral `WKWebView` per evaluation, backed by a non-persistent website data store where compatible. It loads only staged local project content and bundled runtime libraries. The runtime bridge is versioned and one-way by default; game messages are decoded into known event types.
+### Runtime checks
 
-The page gets no provider credential, OAuth token, Keychain access, arbitrary native method call, camera, microphone, location, contacts, or unrestricted network. Navigation and new-window requests are denied. Production projects vendor a pinned Phaser build instead of loading a CDN at play time.
+Two layers stay explicit:
 
-### EvaluationLoop
+**Universal floor, owned by Playloom**
+- document/scene loads;
+- no fatal JavaScript or console error;
+- canvas is not blank;
+- animation heartbeat remains live;
+- synthetic/declared input reaches the game;
+- restart returns to ready.
 
-Programmatic evaluation is authoritative. It collects:
+**Game-specific assertions, produced from the game plan**
+- planned player action changes position/state;
+- score or another planned value changes;
+- required entities/transitions appear;
+- planned win/lose/progression behavior is observable.
 
-- boot/readiness timing;
-- console and unhandled rejection events;
-- animation-frame heartbeat;
-- canvas pixel samples at multiple times;
-- declared entity counts and state snapshots;
-- motion or state deltas;
-- restart determinism;
-- a `WKWebView` snapshot or renderer snapshot where WebGL capture needs a fallback.
+A game plan cannot disable the universal floor. The vertical slice lands the universal checks first; the reliability milestone adds richer plan-generated assertions and bounded repair.
 
-The optional vision evaluator sees only the game screenshot, game brief, and rubric. It does not receive chat history, credentials, provider headers, or unrelated projects. Findings become data in the same bounded repair packet.
+### Assets
 
-### AssetPipeline
-
-Consumes the asset manifest and routes each asset independently. Image Playground is the preferred free option when available. Remote image models use a separately chosen provider and credential. All outputs are decoded, size-limited, stripped of unexpected metadata, normalized, and recorded with origin and prompt provenance. Placeholder vectors keep the game testable when image generation is unavailable.
-
-### ShareClient
-
-Uploads an export-filtered static bundle only after explicit confirmation. The protocol is deliberately small: create deployment, upload immutable files, get status/URL, unpublish. The app remains fully usable when the host is absent. The owner's Oracle VM may host this service but is not an application dependency.
-
-## Data flow: generation
-
-1. AppShell sends a project reference, user instruction, and selected providers to GenerationOrchestrator.
-2. ProjectStore creates a candidate revision.
-3. The orchestrator builds a minimal context package from the manifest, relevant files, and last run report.
-4. ProviderKit signs and sends the request directly from the device.
-5. PatchValidator validates and stages returned operations.
-6. AssetPipeline resolves new asset declarations.
-7. GameRuntime loads the candidate with networking disabled except declared, approved origins (v1 default: none).
-8. EvaluationLoop runs the floor, snapshots the canvas, and optionally invokes vision review.
-9. A passing candidate is atomically promoted. A failure gets a bounded repair request or rollback.
+v1 baseline uses procedural Phaser geometry and user-imported images. The asset manifest uses stable logical IDs. Remote image adapters and Image Playground are later experiments behind availability/capability checks. They cannot become prerequisites for playable generation.
 
 ## Trust boundaries
 
-| Boundary | Trusted input | Untrusted input | Enforcement |
-|---|---|---|---|
-| User → app | explicit local action | imported project content | schema, file, size and runtime validation |
-| Model → project | nothing executable by default | every response and patch | typed patch parser, staging, allowlist |
-| Game → native app | versioned known messages | all JavaScript and project assets | isolated web view, decoded bridge, no secret API |
-| App → provider | selected request | provider response and catalog | TLS, adapter validation, redaction |
-| App → static host | explicit publish bundle | deployment response | export filter, confirmation, host allowlist |
-| Vision model | narrow evaluation packet | generated critique | advisory rubric; floor remains deterministic |
+| Boundary | Untrusted input | Enforcement |
+|---|---|---|
+| Import → app store | all imported files | schema, path, size and type validation; copy, never live edit |
+| Model → candidate | every response and patch | typed patch parser, staging, allowlist |
+| Game → app | all project JavaScript | isolated web view, typed bridge, no secret API |
+| App → provider | provider response/catalog | TLS, adapter validation, redaction |
+| Game plan → checks | generated assertions | constrained assertion schema; universal floor cannot be weakened |
 
-## Concurrency and persistence
+## Later architecture
 
-- One actor owns mutation per project.
-- Provider streaming and runtime events use structured concurrency and support cancellation.
-- Candidate revisions use write-then-rename semantics.
-- The orchestration journal records transitions and is replay-safe.
-- Keychain items use stable, app-owned identifiers; project files store only credential aliases.
-
-## Dependency policy
-
-Prefer Apple frameworks for UI, storage, networking, authentication presentation, Keychain, and web runtime. External packages must have an explicit purpose, compatible license, pinned version, and replacement seam. Phaser is vendored per runtime template with its version captured in the project manifest.
-
-## Future native runtime
-
-A later milestone may add a `game.json` schema for scenes, entities, components, input, collisions, audio, and transitions. A SpriteKit interpreter may render that data. The generator still emits data and assets, never Swift. HTML projects remain supported and portable; native interpretation is additive, not a migration requirement.
+- **Assets:** remote image provider and optional Image Playground.
+- **Providers:** more models after the three stable adapters; experimental ChatGPT only if the spike is safe.
+- **Evaluation:** optional vision critic after deterministic checks prove useful.
+- **Sharing:** thin static host after project/export reliability and Guideline 4.7 work.
+- **Native runtime:** a future SpriteKit interpreter may consume versioned `game.json`; generated Swift remains forbidden.

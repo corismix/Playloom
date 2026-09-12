@@ -34,6 +34,7 @@ jobs:
           test -f docs/PRODUCT_SPEC.md
           test -f docs/ARCHITECTURE.md
           test -f docs/SECURITY.md
+          test -f docs/LICENSING.md
           test -f docs/PROJECT_FORMAT.md
           test -f docs/milestones/README.md
           for target in $(grep -RhoE '\]\(([^)#]+\.md)\)' README.md docs | sed -E 's/^\]\((.*)\)$/\1/' | sort -u); do

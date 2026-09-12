@@ -1,15 +1,15 @@
-# ADR-002: Device-direct bring-your-own access
+# ADR-002: Stable API-key providers; experimental subscription access
 
 - Status: accepted
 
 ## Decision
 
-Support ChatGPT subscription OAuth and API-key providers directly from the device. v1 adapters are ChatGPT subscription, OpenAI, OpenRouter, and OpenCode Go. Store secrets in Keychain. Do not run a remote OpenCode process or model proxy.
+Stable v1 providers are OpenRouter, OpenAI, and OpenCode Go API keys stored in Keychain. ChatGPT subscription OAuth is an experimental device-direct spike and may be omitted. No remote OpenCode process or model proxy is used.
 
 ## Why
 
-This keeps credentials under user control, avoids an app account/backend dependency, and ensures Playloom never resells tokens.
+The stable product should depend on documented provider APIs rather than a consumer-subscription compatibility surface. Device-direct access keeps Playloom from handling or reselling tokens.
 
 ## Consequences
 
-Provider compatibility lives in the app and needs frequent contract tests. ChatGPT subscription support has higher compatibility risk and must pass dedicated feasibility and release gates. No app-owned server sees prompts or provider secrets.
+Provider adapters share a contract. Experimental ChatGPT can be disabled without changing projects or stable adapters. No app-owned server sees prompts or provider secrets.

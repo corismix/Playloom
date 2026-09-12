@@ -2,144 +2,135 @@
 
 ## Product statement
 
-Playloom lets someone describe a small 2D game in chat, play a generated version on the same device, then keep refining it in plain language. It handles the unglamorous loop too: package the files, launch the game, catch runtime failures, inspect a screenshot, and ask the model to fix what broke.
+Playloom lets someone describe a small 2D game, play the generated version on the same device, and refine it in chat. Its differentiator is the closed loop: generate a constrained project, launch it, measure whether it works, and refuse to present a broken candidate as done.
 
 ## Principles
 
-1. **Playable beats impressive-looking source.** A generation is not done until the runtime checks pass.
-2. **The project belongs to the user.** Every game is an ordinary folder of web files and assets.
-3. **Private by default.** Games stay on-device unless the user explicitly exports or publishes one.
-4. **Bring your own access.** Playloom never resells tokens and does not require a Playloom account.
-5. **Constrain generation, not creativity.** The generator may write HTML, CSS, JavaScript, JSON, and assets inside one project. It may not create executable native code.
-6. **Useful without a premium image API.** System shapes and Image Playground provide a no-extra-cost asset path on supported devices.
+1. **Playable beats plausible source.** A candidate must pass programmatic checks.
+2. **Start with one complete path.** Prove prompt-to-edit before broad provider, asset, or sharing work.
+3. **Private by default.** Projects stay on-device unless explicitly exported.
+4. **Bring your own access.** Playloom never resells tokens and needs no account.
+5. **Constrain generation.** Models write web project patches, never executable native code.
+6. **Projects remain portable.** The app's private store is canonical; import/export uses an open folder format.
 
-## Target user
+## v1 user
 
-A single maker who wants to sketch arcade, puzzle, platform, or toy-like 2D games without setting up a development environment. v1 optimizes for one person, one device, and short games rather than teams, marketplaces, or long-running live services.
+One maker sketching short arcade, puzzle, platform, or toy-like 2D games without setting up a development environment. v1 does not optimize for teams, a marketplace, multiplayer services, or public publishing.
 
-## Core journey
+## v1 vertical slice
 
-1. Start a project and describe a game.
-2. Choose a text model connection and, optionally, a different image model.
-3. Playloom asks only the questions that block a useful first build.
-4. The model returns a project patch against a constrained template.
-5. Playloom validates paths and files, loads the game locally, runs checks, and captures a screenshot.
-6. If checks fail, Playloom sends a bounded repair brief to the model and reruns the checks.
-7. The user plays the result, asks for changes, rolls back a bad revision, exports the folder, or publishes a static build.
+1. Create a project and describe a game.
+2. Choose one configured stable text provider.
+3. Generate a Phaser project from a pinned starter.
+4. Validate files and launch the candidate in a sandboxed `WKWebView`.
+5. Run universal checks: load, no JavaScript crash, non-blank rendering, live heartbeat, input path, and restart.
+6. Run game-specific assertions derived from the approved game plan when present.
+7. Promote the candidate only when required checks pass.
+8. Play the game, request one chat edit, apply a typed patch, and reload.
 
 ## v1 scope
 
 ### Included
 
-- iPhone and iPad SwiftUI app.
-- Text chat with project-aware history and explicit generation progress.
-- New game, open game, duplicate, rename, delete, import, and export.
-- Phaser template and a small plain-Canvas template.
-- Touch, keyboard-emulation controls, pause, restart, mute, and orientation metadata.
-- Revision snapshots and rollback.
-- Provider connections:
-  - ChatGPT Plus/Pro through device-direct OAuth and the Codex backend.
-  - OpenAI API key.
-  - OpenRouter API key.
-  - OpenCode Go API key.
-- Independent text and image provider selection.
-- Image Playground assets on devices where Apple exposes the feature.
-- Programmatic runtime checks on every generated revision.
-- Optional screenshot review by a vision-capable model.
-- Explicit publish and unpublish to a thin static host.
-- Local usage estimates when providers return usage data. No Playloom billing.
+- Native SwiftUI shell for iPhone and iPad.
+- One app target organized into `App`, `Projects`, `Providers`, `Runtime`, `Generation`, and `Assets` folders.
+- Phaser-only generated runtime with a vendored, pinned engine version.
+- Project chat, initial generation, one or more edits, constrained patching, and reload.
+- Stable API-key providers: OpenRouter, OpenAI, and OpenCode Go. The vertical slice may begin with one and adds the other stable adapters later in the roadmap.
+- API keys in iOS Keychain.
+- Universal programmatic runtime floor on every candidate.
+- Game-specific assertions generated from a game plan, kept separate from the universal floor.
+- Bounded repair loop, rollback, revisions, app-private persistence, and Files import/export as reliability/projects milestones mature.
+- Procedural shapes and user-imported images as the free asset baseline.
+- Local usage estimates where providers return usage.
+
+### Experimental or postponed
+
+- ChatGPT Plus/Pro subscription access through device-direct OAuth and the Codex backend. It is a risk spike, not promised v1 functionality.
+- Image Playground. It is an optional asset experiment, not the default or a release dependency.
+- Vision-model screenshot evaluation. Postponed until after deterministic checks and the edit loop are reliable.
+- Public static hosting, publish/unpublish, sharing infrastructure, and App Store submission. These are the final roadmap stage.
+- Plain Canvas runtime, SpriteKit runtime, and declarative `game.json` execution.
 
 ### Excluded
 
-- A Playloom login, cloud sync, billing, subscriptions, or token resale.
-- A required remote generation server or remote OpenCode process.
-- Multiplayer servers, leaderboards, accounts inside generated games, or arbitrary network access.
-- An in-app public marketplace or game discovery feed.
-- Generated Swift, dynamic native-code loading, or native plug-ins.
-- SpriteKit execution in v1.
+- Playloom accounts, cloud sync, billing, subscriptions, or token resale.
+- A required generation backend, model proxy, or remote OpenCode process.
+- Generated Swift or dynamically loaded native code.
+- Multiplayer servers, leaderboards, or accounts inside generated games.
 - Android, macOS, or web authoring clients.
-- Guaranteed Image Playground availability on every supported OS/device/region.
 
-## Functional requirements
+## Requirements
 
-### Project creation and chat
+### Generation and edits
 
-- A project begins from a short prompt or a bundled starter.
-- Chat records intent and revision references; large files do not get copied into every message.
-- Before generation, the UI shows the selected providers and whether the request may incur provider charges.
-- Generation may be cancelled. The last passing revision remains playable during a failed generation.
-- Model output is applied through a typed patch protocol, never by allowing a model direct filesystem access.
+- The model receives the game plan, manifest, relevant files, user instruction, and sanitized check report only.
+- Output uses a versioned typed patch protocol. The model never gets direct filesystem access.
+- Paths, file types, sizes, network origins, and secret-like content are validated before launch.
+- Generation and patching are cancellable.
+- A failed candidate never replaces the current passing version.
 
-### Runtime
+### Runtime validation
 
-- Game files are served from a project-scoped custom URL scheme or read-only local server abstraction, not the public internet.
-- A strict content security policy blocks unapproved remote scripts, frames, storage, navigation, downloads, and popups.
-- The bridge exposes a small versioned message surface for readiness, logs, metrics, assertions, and user controls.
-- A watchdog detects failure to boot, uncaught errors, runaway reloads, and a stalled main loop.
-- The user can inspect a concise run report without seeing hidden credentials or full model prompts.
+Universal checks apply to every game and are owned by Playloom:
 
-### Self-check and repair
+- the page and Phaser scene load before timeout;
+- no uncaught exception, unhandled rejection, or fatal console error occurs;
+- the canvas contains meaningful non-background pixels;
+- the animation heartbeat remains alive;
+- the declared input probe reaches the game;
+- restart returns the runtime to a ready state.
 
-Every candidate revision must clear a programmatic floor:
+Game-specific checks come from the structured game plan and vary by game:
 
-- schema and file validation;
-- no paths outside the project root;
-- no disallowed URLs or APIs;
-- JavaScript parse/load success;
-- no uncaught console errors during the test window;
-- a ready signal before timeout;
-- non-blank rendered frames measured from pixels, not DOM presence alone;
-- at least one declared entity and meaningful entity-motion/state assertions where the template expects them;
-- a successful reset/restart assertion.
+- a player can move or otherwise respond to intended input;
+- score, health, inventory, timer, or state changes under a declared scenario;
+- expected entities appear or transitions occur;
+- win, lose, reset, or progression rules produce observable state.
 
-When configured, vision review receives a screenshot plus a narrow rubric: visible game scene, legible UI, clipping, obvious placeholder art, and whether the scene matches the prompt. It must not replace the programmatic floor.
+Game-specific checks may refine acceptance but cannot weaken the universal floor. Early vertical-slice candidates may have only the universal set. Reliability work adds the plan-generated set and bounded repair packets.
 
-A failed candidate gets a structured repair packet containing relevant source slices, sanitized logs, failed assertions, and screenshot findings. v1 allows a small fixed repair budget, default two attempts. It never loops without a visible bound. If repair fails, Playloom restores the previous passing revision and explains the remaining failures.
+### Projects and storage
+
+- App-private storage is the only live source of truth in v1.
+- The app imports a copy from Files and exports a snapshot to Files; it never edits a Files folder in place.
+- Candidate writes are staged and promoted atomically.
+- Revisions and rollback are added before broad asset/provider work.
+- Export excludes credentials, OAuth material, private logs, and device paths.
+
+### Providers
+
+`CredentialProvider` hides whether access is an API key or experimental subscription session. `ModelProvider` normalizes model capability, generation, streaming, cancellation, usage, and errors.
+
+Stable v1 adapters are OpenRouter, OpenAI, and OpenCode Go API keys. OpenCode Go is a direct provider, not an OpenCode server. OpenRouter is the catch-all.
+
+ChatGPT subscription support remains an experiment: Authorization Code + PKCE, token exchange/refresh, and Codex backend calls would occur on the phone, with no Playloom relay. The risk spike may prove or reject it without changing the stable product path.
 
 ### Assets
 
-- The text model writes an asset manifest before assets are generated.
-- The user can choose Image Playground, a configured image provider, generated vector/shape placeholders, or imported files.
-- Text and image providers are selected separately.
-- Asset prompts describe one isolated subject, viewpoint, palette, dimensions, and transparency needs.
-- Generated images are normalized into project assets with stable logical names and provenance metadata.
-- Playloom can regenerate one asset without rebuilding the whole game.
+The free baseline is procedural Phaser geometry/simple generated SVG where safe, plus user-imported images. An asset manifest gives files stable logical names. Remote image providers and Image Playground arrive only after the core loop and projects are reliable. Text and image provider selection stays separate.
 
-### Export and sharing
+## Feasibility gates
 
-- Export produces the canonical project folder or a ZIP with no credential, OAuth token, private prompt history, or device path.
-- A built project opens as static content without Playloom-specific infrastructure where browser capabilities permit.
-- Publish is an explicit action with a preview of the files and generated public URL.
-- The host accepts immutable static bundles, returns a deployment identifier, and supports unpublish. It does not proxy model calls or become an app dependency.
+Before the vertical slice, Milestone 0 must answer three independent risks:
 
-## Provider experience
+1. Can the required WebKit sandbox and runtime instrumentation work on target devices?
+2. How does App Store Review Guideline 4.7 classify generated/downloaded HTML5 mini-games, and what changes are needed to review, cataloging, safety, privacy, or runtime architecture?
+3. Can ChatGPT subscription OAuth/Codex access be ported device-direct safely? A negative answer drops only the experiment.
 
-`CredentialProvider` hides whether access is a subscription OAuth session or API key. `ModelProvider` exposes model discovery, text generation, optional structured output, optional image generation, usage metadata, and cancellation. Capabilities are discovered and cached, not inferred from model names alone.
-
-ChatGPT subscription support is ported device-direct into Swift: Authorization Code + PKCE, token exchange/refresh, account selection where required, and Codex backend requests occur on the phone. No token or request passes through Playloom infrastructure. Because this is not a stable public third-party API contract, feasibility and release compatibility are explicit gates in Milestones 1 and 6.
-
-OpenCode Go is a direct API-key provider. It is not a local or hosted OpenCode server. OpenRouter is the catch-all for models that are not first-class providers.
-
-## Non-functional requirements
-
-- **Privacy:** local-first projects; no analytics SDK in the first release; diagnostics are user-exported.
-- **Security:** Keychain-backed secrets, ephemeral injection into requests, log redaction, strict web sandbox.
-- **Reliability:** atomic revisions, deterministic validation before model-based review, recovery after app termination.
-- **Performance:** playable preview should not block the main thread; incremental patches avoid resending unchanged assets.
-- **Accessibility:** Dynamic Type in the shell, VoiceOver labels, reduced-motion shell behavior, and generated-game accessibility guidance.
-- **Cost visibility:** warn before a provider request, show model and estimated/returned usage, and enforce user-set per-generation limits when the provider supports them.
+The 4.7 spike must record current requirements, classification uncertainty, architecture effects, and a release recommendation. Public distribution does not proceed on an assumption.
 
 ## Success measures
 
-For an internal test set of at least 20 prompts across four game types:
+For an internal set of at least 20 prompts across four simple game types:
 
-- at least 80% produce a passing, playable first revision within the repair budget;
-- 100% of accepted revisions pass the programmatic floor;
-- no secret appears in project export, logs, screenshots, or publish bundles;
-- a passing project can be exported, deleted from Playloom, re-imported, and played unchanged;
-- a published build runs with the Oracle VM unavailable except for the static host under test;
-- no app workflow requires a Playloom account or paid Playloom service.
+- every accepted candidate passes the universal floor;
+- at least 80% become playable within the bounded repair budget by the reliability milestone;
+- prompt → playable → chat edit → patched reload completes end to end;
+- a failed patch leaves the prior game playable;
+- no secret appears in project files, diagnostics, or export;
+- exported projects carry no Playloom copyleft obligation.
 
 ## Release posture
 
-The first public release is free if shipped. Provider charges are between the user and the provider. App Store review, ChatGPT subscription compatibility, Image Playground entitlement/availability, and generated-content safety must all pass the release milestone; none is assumed from a prototype.
+If published, the app is free. Provider charges remain between the user and provider. Stable API-key adapters are sufficient for the product to exist. ChatGPT subscription access, Image Playground, vision evaluation, and public sharing are optional later capabilities, not launch blockers.

@@ -2,56 +2,41 @@
 
 ## Goals
 
-- A generated game cannot reach model credentials or privileged native APIs.
-- Credentials do not leave the device except in requests to the provider they authorize.
-- A project can be exported or published without private chat, secrets, logs, or unrelated files.
-- A malicious model response, imported project, or generated script cannot escape the project boundary.
+- Generated/imported JavaScript cannot reach credentials, privileged native APIs, or another project.
+- Credentials leave the device only in requests to the provider they authorize.
+- Failed candidates cannot replace a passing game.
+- Imports and exports cannot bypass app-private canonical storage.
 
 ## Credentials
 
-API keys, access tokens, refresh tokens, account identifiers that require protection, and PKCE transaction state live in iOS Keychain items with the narrowest practical accessibility class. Secrets are never stored in `UserDefaults`, project files, logs, crash metadata, screenshots, clipboard history, or publish bundles.
+Stable API keys and any experimental OAuth material live in iOS Keychain. Secrets never enter project files, `UserDefaults`, logs, screenshots, clipboard history, diagnostics, or exports. Provider code authorizes a request without exposing persistent raw values to feature folders. Disconnect deletes the relevant items and cached state.
 
-Provider code asks a credential object to authorize a request. It does not expose raw persistent secrets to feature modules. Disconnect deletes the provider's Keychain items and clears cached authorization state. Refresh is serialized to avoid token reuse races.
-
-ChatGPT subscription login uses `ASWebAuthenticationSession`, Authorization Code + PKCE, state verification, an exact callback scheme, and device-side token exchange. No embedded password form and no Playloom relay server are permitted. The implementation must be rechecked against the current open-source Codex client and provider behavior at every release because the third-party compatibility surface may change.
+Experimental ChatGPT login, if retained after the risk spike, uses `ASWebAuthenticationSession`, Authorization Code + PKCE, state verification, exact callbacks, and device-side exchange. No Playloom relay is allowed. Removing the experiment must not affect stable API-key providers.
 
 ## Web runtime
 
-Generated content is untrusted:
+Generated content is untrusted. The dedicated project `WKWebView` uses a typed, versioned bridge; blocks navigation, popups, downloads, sensors, clipboard, cross-project files, and undeclared network; and receives no credential/provider header. Runtime libraries are pinned and vendored. Process failure discards the candidate web view.
 
-- use a dedicated, ephemeral web view for evaluation;
-- keep the native bridge small, typed, and versioned;
-- deny navigation, popups, downloads, clipboard, sensors, camera, microphone, location, and arbitrary file access;
-- inject a strict CSP and block undeclared outbound requests at the navigation/resource layer;
-- vendor runtime libraries rather than rely on mutable CDN content;
-- do not expose app cookies, provider headers, credentials, or other project paths;
-- terminate and rebuild the web view after a failed or timed-out run.
+Milestone 0 tests whether these controls and universal instrumentation are technically sufficient and assesses how Guideline 4.7 affects the architecture. App Store classification is not treated as a security control or assumed approval.
 
-Imported projects go through the same checks as generated projects.
+## Model boundary
 
-## Model and prompt handling
+Only required project context, user instruction, structured game plan, and sanitized run report reach the selected model. Model output cannot change credentials, weaken universal checks, approve itself, or trigger export/publication. Typed patch validation rejects traversal, unexpected types/sizes/origins, and secret-like data.
 
-Only the selected project's required files, user instruction, and sanitized run report go to the selected model. Screenshots sent for vision review are cropped to the game view and checked for accidental shell overlays. The UI identifies which provider receives text or images before the request.
+## Storage and export
 
-Model output cannot expand scope, request secrets, change provider settings, enable publishing, or approve its own code. Repair packets redact credentials, authorization headers, device paths, user identifiers, and unrelated chat.
+App-private storage is canonical. Import copies through validation. Export constructs a new snapshot from an allowlist. Tests seed canary secrets and prove they do not survive diagnostics or export. External Files changes never mutate an open project.
 
-## Export and publish
+## Supply chain and licensing
 
-An allowlist constructs exports from the manifest. Before release, tests seed projects with canary secrets and prove none survive export or publish. Publishing always shows destination, project, revision, and visibility. Unpublish removes the public deployment when supported, while making no claim that third-party caches or prior downloads are erased.
-
-## Supply chain
-
-Dependencies are pinned and recorded. CI runs secret scanning, license checks, tests, and a release archive inspection. Runtime templates record Phaser and template versions. Updating a template cannot silently rewrite existing projects.
-
-## Abuse and content
-
-v1 has no public feed and no server-side user account. The app still needs local warnings and provider-policy handling for disallowed image or text generation. A static host needs file-size/type limits, rate controls independent of the app, abuse reporting, and a takedown path before public sharing ships.
+Dependencies are pinned and inventoried. Playloom uses MIT; runtime/export templates use MIT or explicit CC0. CI checks template notices and rejects GPL/AGPL dependencies from export fixtures unless a future reviewed decision deliberately changes policy.
 
 ## Release blockers
 
-- Secret appears in logs, exported ZIP, screenshot packet, or publish bundle.
-- Generated content can invoke an undeclared native method or outbound origin.
-- OAuth state/PKCE or callback validation is bypassable.
-- Provider tokens transit an app-owned server.
-- A generated/imported project can read another project.
-- A failed candidate can replace the last passing revision.
+- Secret appears in logs, app files outside Keychain, diagnostics, or export.
+- Generated content reaches undeclared native methods, outbound origins, or another project.
+- Universal checks can be weakened by model/project data.
+- Import can become a live externally mutable source.
+- Failed candidate can replace the last passing revision.
+- Provider credentials transit a Playloom-controlled server.
+- Current Guideline 4.7 requirements lack a recorded classification and architecture response before public distribution.
