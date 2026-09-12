@@ -34,6 +34,16 @@ jobs:
           -scheme Playloom
           -destination 'platform=iOS Simulator,name=${{ steps.simulator.outputs.device }}'
           CODE_SIGNING_ALLOWED=NO
+      - name: Collect generated project directories
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p generated-projects
+          find "$HOME/Library/Developer/CoreSimulator/Devices" -type d -name PlayloomWorkspace -print0 2>/dev/null | while IFS= read -r -d '' workspace; do
+            find "$workspace" -mindepth 1 -maxdepth 1 -type d -print0 | while IFS= read -r -d '' project; do
+              cp -R "$project" "generated-projects/$(basename "$project")"
+            done
+          done
       - name: Upload generated project directories
         if: always()
         uses: actions/upload-artifact@v4
