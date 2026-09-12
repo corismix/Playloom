@@ -2,7 +2,15 @@ import Foundation
 
 nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
     private let keyStore: APIKeyStoring; private let session: URLSession; private let model: String; private let conversationID: String
-    init(keyStore: APIKeyStoring, session: URLSession = .shared, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString) { self.keyStore=keyStore; self.session=session; self.model=model; self.conversationID=conversationID }
+    init(keyStore: APIKeyStoring, session: URLSession? = nil, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString) {
+        self.keyStore=keyStore; self.model=model; self.conversationID=conversationID
+        if let session { self.session=session } else {
+            let configuration=URLSessionConfiguration.ephemeral
+            configuration.timeoutIntervalForRequest=300
+            configuration.timeoutIntervalForResource=360
+            self.session=URLSession(configuration:configuration)
+        }
+    }
     func generateProject(prompt: String) async throws -> GameProject { try await request(user: prompt) }
     func editProject(_ project: GameProject, instruction: String) async throws -> GameProject {
         let data=try JSONEncoder().encode(project); guard let json=String(data:data,encoding:.utf8) else { throw ProviderError.invalidProject }
