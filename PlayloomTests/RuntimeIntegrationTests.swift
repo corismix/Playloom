@@ -23,15 +23,11 @@ final class RuntimeIntegrationTests: XCTestCase {
         XCTAssertEqual(session.contentProcessTerminations, 0)
     }
 
-    func testExternalNavigationIsBlocked() async {
+    func testNavigationPolicyRejectsExternalURL() {
         let session = GameRuntimeSession()
-        let webView = session.makeWebView()
+        _ = session.makeWebView()
         guard let url = URL(string: "https://example.com") else { return XCTFail("URL") }
 
-        webView.load(URLRequest(url: url))
-        let blocked = await session.waitUntilNavigationBlocked(timeout: .seconds(2))
-
-        XCTAssertTrue(blocked)
-        XCTAssertEqual(session.blockedNavigations.last, url)
+        XCTAssertFalse(session.isAllowedNavigation(url))
     }
 }

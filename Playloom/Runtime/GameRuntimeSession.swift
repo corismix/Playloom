@@ -12,6 +12,7 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
 
     override init() {
         fixtureURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "RuntimeFixture")
+            ?? Bundle.main.url(forResource: "index", withExtension: "html")
         super.init()
     }
 
@@ -94,9 +95,13 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
-        let allowed = url.isFileURL && fixtureURL.map { url.path.hasPrefix($0.deletingLastPathComponent().path) } == true
-        if allowed || url.scheme == "about" { decisionHandler(.allow) }
+        if isAllowedNavigation(url) { decisionHandler(.allow) }
         else { blockedNavigations.append(url); decisionHandler(.cancel) }
+    }
+
+    func isAllowedNavigation(_ url: URL) -> Bool {
+        if url.scheme == "about" { return true }
+        return url.isFileURL && fixtureURL.map { url.path.hasPrefix($0.deletingLastPathComponent().path) } == true
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
