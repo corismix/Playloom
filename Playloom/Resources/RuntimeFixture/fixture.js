@@ -8,7 +8,8 @@
     context.fillStyle = '#50e3c2'; context.fillRect(x,210,36,36);
     context.fillStyle = '#fff'; context.font = '20px system-ui'; context.fillText('Playloom',108,64);
   }
-  function loop() { frame += 1; x = 48 + Math.sin(frame / 30) * 20; draw(); if (frame % 10 === 0) send({type:'heartbeat',frame}); requestAnimationFrame(loop); }
+  function loop() { frame += 1; x = 48 + Math.sin(frame / 30) * 20; draw(); requestAnimationFrame(loop); }
+  setInterval(() => send({type:'heartbeat',frame}), 50);
   canvas.addEventListener('pointerdown', () => send({type:'input'}));
   window.playloomProbeInput = () => canvas.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
   window.playloomRestart = () => { frame=0; x=48; draw(); send({type:'restarted'}); };
