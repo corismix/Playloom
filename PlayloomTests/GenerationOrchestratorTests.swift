@@ -105,6 +105,93 @@ final class GenerationOrchestratorTests: XCTestCase {
         XCTAssertEqual(completed.outcome?.candidateID, setup.candidateID)
     }
 
+    func testProductionWiringRecoversFileBackedOpenCodeEnvelopeAfterObjectRecreation() async throws {
+        let projectID = ProjectID()
+        let runID = RunID()
+        let candidateID = CandidateID()
+        let operationID = OperationID()
+        let baseRevisionID = BaseRevisionID()
+        let journalURL = temporaryURL("production-wiring-journal")
+        let workspaceURL = temporaryURL("production-wiring-workspace")
+        let transportRoot = temporaryURL("production-wiring-transport")
+        let transferStoreURL = transportRoot.appending(path: "transfers.json")
+        let project = setupProject(title: "Production wiring recovery")
+        defer {
+            try? FileManager.default.removeItem(at: journalURL)
+            try? FileManager.default.removeItem(at: workspaceURL)
+            try? FileManager.default.removeItem(at: transportRoot)
+        }
+
+        let initialJournal = try RunJournal(fileURL: journalURL, projectID: projectID)
+        let operation = GenerationOperation(id: operationID, kind: .generate, stage: .generating, candidateID: candidateID, baseRevisionID: baseRevisionID, retryRound: nil)
+        try await initialJournal.createRun(baseRevisionID: baseRevisionID, operation: operation, runID: runID)
+        _ = try ProjectWorkspace(root: workspaceURL)
+
+        let requestBodyURL = transportRoot.appending(path: "request.json")
+        let responseURL = transportRoot.appending(path: "response.bin")
+        try FileManager.default.createDirectory(at: transportRoot, withIntermediateDirectories: true)
+        try Data("prompt and project source".utf8).write(to: requestBodyURL, options: .atomic)
+        let content = String(data: try JSONEncoder().encode(project), encoding: .utf8)!
+        let envelope = ProductionOpenCodeResponse(choices: [.init(message: .init(content: content))])
+        try JSONEncoder().encode(envelope).write(to: responseURL, options: .atomic)
+        let transfer = BackgroundHTTPClient.TransferRecord(
+            taskIdentifier: 1201,
+            requestBodyURL: requestBodyURL,
+            responseURL: responseURL,
+            projectID: projectID,
+            runID: runID,
+            operationID: operationID,
+            candidateID: candidateID,
+            baseRevisionID: baseRevisionID,
+            state: .completed,
+            responseStatus: 200,
+            responseHeaders: ["Content-Type": "application/json"],
+            errorDescription: nil
+        )
+        try ApplicationSupportTransferStore(fileURL: transferStoreURL).save([transfer])
+
+        // Recreate every production component from its persisted paths. The
+        // response is an actual OpenCode envelope, while transport state and
+        // the staged candidate remain on disk between the two object graphs.
+        let recreatedStore = ApplicationSupportTransferStore(fileURL: transferStoreURL)
+        let recreatedTransport = BackgroundHTTPClient(
+            store: recreatedStore,
+            session: URLSession(configuration: .ephemeral),
+            transportRoot: transportRoot
+        )
+        let provider = OpenCodeGoProvider(
+            keyStore: ProductionWiringKeyStore(),
+            session: URLSession(configuration: .ephemeral),
+            conversationID: "production-wiring-test",
+            backgroundClient: recreatedTransport
+        )
+        let recreatedJournal = try RunJournal(fileURL: journalURL, projectID: projectID)
+        let recreatedWorkspace = try ProjectWorkspace(root: workspaceURL)
+        let orchestrator = GenerationOrchestrator(
+            projectID: projectID,
+            provider: provider,
+            journal: recreatedJournal,
+            workspace: recreatedWorkspace,
+            runtimeCheck: { _ in self.passingRuntimeReport() },
+            setIdleTimerDisabled: { _ in }
+        )
+
+        await orchestrator.recoverOnLaunch(as: .osRelaunchInterrupted)
+        let run = try await waitForTerminal(journalURL: journalURL, projectID: projectID)
+        let snapshot = await recreatedJournal.snapshot()
+
+        XCTAssertEqual(run.outcome?.status, .completed)
+        XCTAssertEqual(run.outcome?.candidateID, candidateID)
+        XCTAssertNil(snapshot.activeRunID)
+        XCTAssertEqual(orchestrator.project, project)
+        XCTAssertTrue(run.events.contains { $0.kind == .providerOutputReceived })
+        XCTAssertTrue(run.events.contains { $0.kind == .candidateStaged })
+        XCTAssertTrue(run.events.contains { $0.kind == .checkFinished })
+        XCTAssertTrue(run.events.contains { $0.kind == .completed })
+        XCTAssertTrue(try ApplicationSupportTransferStore(fileURL: transferStoreURL).load().isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: workspaceURL.appending(path: candidateID.description, directoryHint: .isDirectory).appending(path: "vendor/phaser.min.js").path))
+    }
+
     func testCrashImmediatelyBeforeAcknowledgementRecoversFromDurableCandidateCheckpoint() async throws {
         let setup = try await makeSetup(transferState: .completed, journalizesTransfer: true, stageCandidate: true)
         defer { setup.cleanup() }
@@ -662,6 +749,20 @@ private struct RecoverySetup {
 }
 
 private enum RecoveryTestError: Error { case missingTransfer, missingRun }
+
+private struct ProductionOpenCodeResponse: Codable {
+    struct Choice: Codable {
+        struct Message: Codable { let content: String }
+        let message: Message
+    }
+    let choices: [Choice]
+}
+
+private struct ProductionWiringKeyStore: APIKeyStoring {
+    func read() throws -> String? { nil }
+    func save(_ key: String) throws {}
+    func delete() throws {}
+}
 
 private actor RecoveryGate {
     private var released = false

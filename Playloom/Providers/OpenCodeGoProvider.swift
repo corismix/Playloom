@@ -10,9 +10,9 @@ nonisolated final class OpenCodeGoProvider: BackgroundRecoveringProvider, Sendab
     private let conversationID: String
     private let backgroundClient: BackgroundHTTPClient?
 
-    init(keyStore: APIKeyStoring, session: URLSession? = nil, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString) {
+    init(keyStore: APIKeyStoring, session: URLSession? = nil, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString, backgroundClient: BackgroundHTTPClient? = nil) {
         self.keyStore = keyStore; self.model = model; self.conversationID = conversationID
-        self.backgroundClient = session == nil ? .shared : nil
+        self.backgroundClient = backgroundClient ?? (session == nil ? .shared : nil)
         if let session { self.session = session } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 300
