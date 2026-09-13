@@ -54,8 +54,8 @@ final class GenerationModel {
         projectID: ProjectID? = nil,
         journal: RunJournal? = nil,
         workspace: ProjectWorkspace? = nil,
-        runtimeCheck: @escaping @MainActor (GameRuntimeSession) async -> RuntimeReport = { session in
-            await UniversalRuntimeChecker().run(session: session)
+        runtimeCheck: @escaping @MainActor (GameRuntimeSession) async throws -> RuntimeReport = { session in
+            try await UniversalRuntimeChecker().run(session: session)
         }
     ) {
         self.keyStore = keyStore

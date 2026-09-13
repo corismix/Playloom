@@ -18,7 +18,12 @@ nonisolated final class ApplicationSupportTransferStore: BackgroundTransferStori
     }
     func save(_ records: [BackgroundHTTPClient.TransferRecord]) throws {
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(records).write(to: fileURL, options: .atomic)
+        let sanitized = records.map { record in
+            var copy = record
+            copy.responseHeaders = BackgroundTransferHeaderPolicy.sanitize(record.responseHeaders)
+            return copy
+        }
+        try JSONEncoder().encode(sanitized).write(to: fileURL, options: .atomic)
     }
 }
 
@@ -32,6 +37,77 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
         let candidateID: CandidateID?; let baseRevisionID: BaseRevisionID
         var state: TransferState; var responseStatus: Int?; var responseHeaders: [String: String]
         var errorDescription: String?; var updatedAt: Date = Date()
+
+        init(
+            taskIdentifier: Int,
+            requestBodyURL: URL,
+            responseURL: URL,
+            projectID: ProjectID,
+            runID: RunID,
+            operationID: OperationID,
+            candidateID: CandidateID?,
+            baseRevisionID: BaseRevisionID,
+            state: TransferState,
+            responseStatus: Int?,
+            responseHeaders: [String: String],
+            errorDescription: String?,
+            updatedAt: Date = Date()
+        ) {
+            self.taskIdentifier = taskIdentifier
+            self.requestBodyURL = requestBodyURL
+            self.responseURL = responseURL
+            self.projectID = projectID
+            self.runID = runID
+            self.operationID = operationID
+            self.candidateID = candidateID
+            self.baseRevisionID = baseRevisionID
+            self.state = state
+            self.responseStatus = responseStatus
+            self.responseHeaders = BackgroundTransferHeaderPolicy.sanitize(responseHeaders)
+            self.errorDescription = errorDescription
+            self.updatedAt = updatedAt
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case taskIdentifier, requestBodyURL, responseURL, projectID, runID, operationID
+            case candidateID, baseRevisionID, state, responseStatus, responseHeaders, errorDescription, updatedAt
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(
+                taskIdentifier: try container.decode(Int.self, forKey: .taskIdentifier),
+                requestBodyURL: try container.decode(URL.self, forKey: .requestBodyURL),
+                responseURL: try container.decode(URL.self, forKey: .responseURL),
+                projectID: try container.decode(ProjectID.self, forKey: .projectID),
+                runID: try container.decode(RunID.self, forKey: .runID),
+                operationID: try container.decode(OperationID.self, forKey: .operationID),
+                candidateID: try container.decodeIfPresent(CandidateID.self, forKey: .candidateID),
+                baseRevisionID: try container.decode(BaseRevisionID.self, forKey: .baseRevisionID),
+                state: try container.decode(TransferState.self, forKey: .state),
+                responseStatus: try container.decodeIfPresent(Int.self, forKey: .responseStatus),
+                responseHeaders: try container.decodeIfPresent([String: String].self, forKey: .responseHeaders) ?? [:],
+                errorDescription: try container.decodeIfPresent(String.self, forKey: .errorDescription),
+                updatedAt: try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+            )
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(taskIdentifier, forKey: .taskIdentifier)
+            try container.encode(requestBodyURL, forKey: .requestBodyURL)
+            try container.encode(responseURL, forKey: .responseURL)
+            try container.encode(projectID, forKey: .projectID)
+            try container.encode(runID, forKey: .runID)
+            try container.encode(operationID, forKey: .operationID)
+            try container.encodeIfPresent(candidateID, forKey: .candidateID)
+            try container.encode(baseRevisionID, forKey: .baseRevisionID)
+            try container.encode(state, forKey: .state)
+            try container.encodeIfPresent(responseStatus, forKey: .responseStatus)
+            try container.encode(BackgroundTransferHeaderPolicy.sanitize(responseHeaders), forKey: .responseHeaders)
+            try container.encodeIfPresent(errorDescription, forKey: .errorDescription)
+            try container.encode(updatedAt, forKey: .updatedAt)
+        }
     }
     nonisolated struct TransferResponse: Sendable {
         let data: Data
@@ -54,6 +130,7 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
     private final class CancellationBox: @unchecked Sendable { var task: URLSessionUploadTask? }
     private let store: BackgroundTransferStoring
     private let storeLoadFailed: Bool
+    private let transportRoot: URL
     private let lock = NSLock(); private var records: [Int: TransferRecord]; private var pending: [Int: Pending] = [:]; private var tasks: [Int: URLSessionTask] = [:]
     private var backgroundCompletion: (() -> Void)?; private let sessionBox = SessionBox()
     private var session: URLSession {
@@ -66,8 +143,9 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
         }
     }
 
-    init(store: BackgroundTransferStoring = ApplicationSupportTransferStore(), session: URLSession? = nil) {
+    init(store: BackgroundTransferStoring = ApplicationSupportTransferStore(), session: URLSession? = nil, transportRoot: URL? = nil) {
         self.store = store
+        self.transportRoot = transportRoot ?? Self.defaultTransportRoot()
         let loadedRecords: [TransferRecord]
         do {
             loadedRecords = try store.load()
@@ -82,11 +160,9 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
 
     func upload(for request: URLRequest, body: Data, context: GenerationRequest) async throws -> TransferResponse {
         try ensureStoreLoaded()
-        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appending(path: "Playloom/ProviderTransport", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let bodyURL = root.appending(path: "request-\(UUID().uuidString).json")
-        let responseURL = root.appending(path: "response-\(UUID().uuidString).bin")
+        try FileManager.default.createDirectory(at: transportRoot, withIntermediateDirectories: true)
+        let bodyURL = transportRoot.appending(path: "request-\(UUID().uuidString).json")
+        let responseURL = transportRoot.appending(path: "response-\(UUID().uuidString).bin")
         try body.write(to: bodyURL, options: .atomic)
         try Data().write(to: responseURL, options: .atomic)
         var request = request; request.httpBody = nil; let cancellation = CancellationBox()
@@ -141,6 +217,104 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
 
     func metadata(for runID: RunID) -> [TransferMetadata] {
         lock.withLock { records.values.filter { $0.runID == runID }.map(metadata).sorted { $0.taskIdentifier < $1.taskIdentifier } }
+    }
+
+    func metadata(for taskIdentifier: Int) -> TransferMetadata? {
+        lock.withLock { records[taskIdentifier].map(metadata) }
+    }
+
+    /// Durably cancels every still-running transfer for a run. Completed
+    /// responses are deliberately retained until the caller's terminal journal
+    /// write triggers cleanup; they can no longer be promoted after a durable
+    /// Stop request.
+    @discardableResult
+    func cancelTransfers(for runID: RunID) async throws -> [Int] {
+        try ensureStoreLoaded()
+        let sessionTasks = await allTasks()
+        var tasksToCancel: [URLSessionTask] = []
+        var persistenceError: Swift.Error?
+        let identifiers: [Int] = lock.withLock {
+            for task in sessionTasks {
+                tasks[task.taskIdentifier] = task
+            }
+            let previous = records
+            let runningIdentifiers = records.values
+                .filter { $0.runID == runID && $0.state == .running }
+                .map(\.taskIdentifier)
+            // A previous process may have persisted `.cancelled` immediately
+            // before it crashed while the corresponding URLSession task was
+            // still alive. Re-enumerated tasks are the only records that need
+            // another cancellation call; terminal records without a live task
+            // remain terminal and are cleaned up normally.
+            let liveAlreadyCancelledIdentifiers = records.values
+                .filter { $0.runID == runID && $0.state == .cancelled && tasks[$0.taskIdentifier] != nil }
+                .map(\.taskIdentifier)
+            let identifiers = Set(runningIdentifiers + liveAlreadyCancelledIdentifiers).sorted()
+            guard !identifiers.isEmpty else { return [] }
+            for identifier in runningIdentifiers where records[identifier] != nil {
+                records[identifier]?.state = .cancelled
+                records[identifier]?.errorDescription = "Cancelled"
+                records[identifier]?.updatedAt = Date()
+            }
+            if !runningIdentifiers.isEmpty {
+                do {
+                    try persistLocked()
+                } catch {
+                    records = previous
+                    persistenceError = error
+                }
+            }
+            for identifier in identifiers {
+                if let task = tasks.removeValue(forKey: identifier) { tasksToCancel.append(task) }
+                if let value = pending.removeValue(forKey: identifier), !value.finished {
+                    value.finished = true
+                    value.continuation?.resume(throwing: Swift.CancellationError())
+                    value.continuation = nil
+                }
+            }
+            return identifiers
+        }
+        tasksToCancel.forEach { $0.cancel() }
+        if let persistenceError { throw persistenceError }
+        return identifiers
+    }
+
+    /// Deletes a bounded number of terminal records and their retained files.
+    /// Records belonging to active runs are retained even when terminal.
+    @discardableResult
+    func cleanupTerminalTransfers(retaining runIDs: Set<RunID> = [], limit: Int = 100) throws -> [Int] {
+        guard limit > 0 else { return [] }
+        return try lock.withLock {
+            try ensureStoreLoaded()
+            let removable = records.values
+                .filter { record in
+                    switch record.state {
+                    case .completed, .failed, .cancelled, .interrupted: return !runIDs.contains(record.runID)
+                    case .running: return false
+                    }
+                }
+                .sorted { $0.updatedAt < $1.updatedAt }
+                .prefix(limit)
+            let removed = removable.map(\.taskIdentifier)
+            if !removable.isEmpty {
+                for record in removable {
+                    records.removeValue(forKey: record.taskIdentifier)
+                    tasks.removeValue(forKey: record.taskIdentifier)
+                }
+                do {
+                    try persistLocked()
+                } catch {
+                    for record in removable { records[record.taskIdentifier] = record }
+                    throw error
+                }
+                for record in removable {
+                    try? FileManager.default.removeItem(at: record.requestBodyURL)
+                    try? FileManager.default.removeItem(at: record.responseURL)
+                }
+            }
+            removeOrphanedTransferFiles(limit: limit)
+            return removed
+        }
     }
 
     func waitForTransfer(taskIdentifier: Int) async throws -> TransferResponse {
@@ -217,7 +391,7 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
             record.errorDescription = error?.localizedDescription; record.updatedAt = Date()
             if let response = task.response as? HTTPURLResponse {
                 record.responseStatus = response.statusCode
-                record.responseHeaders = response.allHeaderFields.reduce(into: [:]) { $0[String(describing: $1.key)] = String(describing: $1.value) }
+                record.responseHeaders = Self.safeResponseHeaders(response.allHeaderFields)
             }
             records[task.taskIdentifier] = record
             var persistenceFailed = false
@@ -291,7 +465,7 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
         TransferMetadata(taskIdentifier: record.taskIdentifier, requestBodyURL: record.requestBodyURL, responseURL: record.responseURL,
             projectID: record.projectID, runID: record.runID, operationID: record.operationID, candidateID: record.candidateID,
             baseRevisionID: record.baseRevisionID, state: record.state, responseStatus: record.responseStatus,
-            responseHeaders: record.responseHeaders, updatedAt: record.updatedAt)
+            responseHeaders: BackgroundTransferHeaderPolicy.sanitize(record.responseHeaders), updatedAt: record.updatedAt)
     }
     private func isCancellation(_ error: Swift.Error?) -> Bool {
         if error is Swift.CancellationError { return true }
@@ -299,8 +473,35 @@ nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, 
         return false
     }
     private func persistLocked() throws { try store.save(Array(records.values)) }
+    private func removeOrphanedTransferFiles(limit: Int) {
+        guard limit > 0,
+              let files = try? FileManager.default.contentsOfDirectory(at: transportRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return }
+        let referenced = Set(records.values.flatMap { [$0.requestBodyURL.standardizedFileURL.path, $0.responseURL.standardizedFileURL.path] })
+        let candidates = files.filter { url in
+            let name = url.lastPathComponent
+            return (name.hasPrefix("request-") && name.hasSuffix(".json") || name.hasPrefix("response-") && name.hasSuffix(".bin"))
+                && !referenced.contains(url.standardizedFileURL.path)
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for file in candidates.prefix(limit) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+    private func allTasks() async -> [URLSessionTask] {
+        await withCheckedContinuation { continuation in
+            session.getAllTasks { continuation.resume(returning: $0) }
+        }
+    }
     private func ensureStoreLoaded() throws {
         if storeLoadFailed { throw Error.persistenceFailure }
+    }
+
+    static func safeResponseHeaders(_ headers: [AnyHashable: Any]) -> [String: String] {
+        BackgroundTransferHeaderPolicy.sanitize(headers)
+    }
+
+    private static func defaultTransportRoot() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Playloom/ProviderTransport", directoryHint: .isDirectory)
     }
 }
 

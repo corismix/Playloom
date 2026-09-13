@@ -31,7 +31,7 @@ final class GenerationOrchestrator {
 
     private let provider: ModelProvider
     private let workspace: ProjectWorkspace
-    private let runtimeCheck: @MainActor (GameRuntimeSession) async -> RuntimeReport
+    private let runtimeCheck: @MainActor (GameRuntimeSession) async throws -> RuntimeReport
     private let setIdleTimerDisabled: @MainActor @Sendable (Bool) -> Void
 
     private(set) var events: [GenerationEvent] = []
@@ -54,7 +54,7 @@ final class GenerationOrchestrator {
         provider: ModelProvider,
         journal: RunJournal,
         workspace: ProjectWorkspace,
-        runtimeCheck: @escaping @MainActor (GameRuntimeSession) async -> RuntimeReport,
+        runtimeCheck: @escaping @MainActor (GameRuntimeSession) async throws -> RuntimeReport,
         setIdleTimerDisabled: @escaping @MainActor @Sendable (Bool) -> Void = { disabled in
             UIApplication.shared.isIdleTimerDisabled = disabled
         }
@@ -85,6 +85,9 @@ final class GenerationOrchestrator {
 
     func loadPersistedActivity() async {
         let snapshot = await journal.snapshot()
+        if let passing = loadPassingProject(from: snapshot) {
+            project = passing.project
+        }
         guard let run = snapshot.runs.last else { return }
         await refreshEvents(for: run.id)
     }
@@ -174,78 +177,241 @@ final class GenerationOrchestrator {
         defer {
             if busyReservation == reservation { busyReservation = nil }
         }
+
         let snapshot = await journal.snapshot()
+        cleanupTerminalTransport(retaining: snapshot.activeRunID.map { Set([$0]) } ?? [])
         guard let runID = snapshot.activeRunID else {
             if let latest = snapshot.runs.last { await refreshEvents(for: latest.id) }
             return
         }
-        do {
-            try await journal.recoverInFlightRun(as: reason)
-            await refreshEvents(for: runID)
-        } catch {
-            await refreshEvents(for: runID)
+        guard let snapshotRun = snapshot.runs.first(where: { $0.id == runID }) else {
+            do {
+                _ = try await journal.finalizeMissingActiveRun(
+                    summary: "Generation recovery failed",
+                    detail: recoveryDetail(reason: reason, issue: "The journal active run record was missing; the last playable game was preserved.")
+                )
+                await refreshEvents(for: runID)
+                cleanupTerminalTransport()
+            } catch {
+                didAttemptLaunchRecovery = false
+            }
             return
         }
 
-        guard let run = await journal.run(runID) else { return }
-        guard let operation = run.operations.last, let candidateID = operation.candidateID else {
-            let missingOperation = run.operations.last
-            let detail = "The interrupted run did not retain a stable candidate identity."
-            let outcome = GenerationOutcome(status: .failed, timestamp: Date(), summary: "Generation could not resume", detail: detail, candidateID: missingOperation?.candidateID, durationMilliseconds: nil, usage: nil)
-            let event = GenerationEvent(
-                id: UUID(), timestamp: Date(), projectID: run.projectID, runID: run.id,
-                candidateID: missingOperation?.candidateID, operationID: missingOperation?.id, baseRevisionID: run.baseRevisionID,
-                kind: .failed, lifecycle: .failed, stage: run.currentStage, summary: outcome.summary, detail: detail,
-                check: nil, fileDiff: nil, retryRound: missingOperation?.retryRound, durationMilliseconds: nil, usage: nil, backgroundTransfer: nil
-            )
+        if [.cancelled, .failed, .completed].contains(snapshotRun.lifecycle) || snapshotRun.outcome != nil {
+            if let recoveringProvider = provider as? any BackgroundRecoveringProvider {
+                try? await recoveringProvider.cancelBackgroundTransfers(for: runID)
+            }
             do {
-                try await journal.finalize(outcome, with: event, runID: runID)
-                publish(event)
-            } catch {
+                _ = try await journal.normalizeTerminalActiveRun(
+                    runID: runID,
+                    fallbackSummary: "Generation recovery failed",
+                    fallbackDetail: recoveryDetail(reason: reason, issue: "The terminal run record was incomplete; the last playable game was preserved.")
+                )
                 await refreshEvents(for: runID)
+                cleanupTerminalTransport()
+            } catch {
+                didAttemptLaunchRecovery = false
             }
             return
         }
-        guard let openCode = provider as? OpenCodeGoProvider else { return }
-        let transfers: [BackgroundHTTPClient.TransferMetadata]
+
         do {
-            transfers = try await openCode.recoverBackgroundTransfers(for: runID)
+            _ = try await journal.recoverInFlightRun(as: reason)
         } catch {
-            let detail = "The background provider response could not be recovered safely."
-            let outcome = GenerationOutcome(status: .failed, timestamp: Date(), summary: "Background response unavailable", detail: detail, candidateID: operation.candidateID, durationMilliseconds: nil, usage: nil)
-            let event = GenerationEvent(
-                id: UUID(), timestamp: Date(), projectID: run.projectID, runID: run.id,
-                candidateID: operation.candidateID, operationID: operation.id, baseRevisionID: operation.baseRevisionID,
-                kind: .failed, lifecycle: .failed, stage: .receiving, summary: outcome.summary, detail: detail,
-                check: nil, fileDiff: nil, retryRound: operation.retryRound, durationMilliseconds: nil, usage: nil, backgroundTransfer: nil
+            await finishRecoveryFailure(
+                run: snapshotRun,
+                summary: "Generation recovery failed",
+                detail: recoveryDetail(reason: reason, issue: "The interrupted run could not be classified safely; the last playable game was preserved.")
             )
-            do {
-                try await journal.finalize(outcome, with: event, runID: runID)
-                publish(event)
-            } catch {
-                await refreshEvents(for: runID)
-            }
             return
         }
-        for transfer in transfers {
-            try? await journal.recordBackgroundTransfer(appMetadata(for: transfer), runID: runID)
+        await refreshEvents(for: runID)
+
+        guard busyReservation == reservation, let run = await journal.run(runID) else {
+            await finishRecoveryFailure(
+                run: snapshotRun,
+                summary: "Generation recovery failed",
+                detail: recoveryDetail(reason: reason, issue: "The interrupted run was no longer available to resume; the last playable game was preserved.")
+            )
+            return
         }
-        guard let transfer = transfers.last(where: { $0.state == .running || $0.state == .completed }) else { return }
-        guard busyReservation == reservation else { return }
+        guard let operation = run.operations.last, let candidateID = operation.candidateID else {
+            await finishRecoveryFailure(
+                run: run,
+                summary: "Generation could not resume",
+                detail: recoveryDetail(reason: reason, issue: "The interrupted run did not retain a stable candidate identity; the last playable game was preserved.")
+            )
+            return
+        }
+
+        if run.events.contains(where: { $0.kind == .cancellationRequested }) {
+            if let recoveringProvider = provider as? any BackgroundRecoveringProvider {
+                try? await recoveringProvider.cancelBackgroundTransfers(for: runID)
+            }
+            await finishRecoveryCancellation(run: run, operation: operation, reason: reason)
+            return
+        }
+
+        let currentSnapshot = await journal.snapshot()
+        let restoredCurrent = loadPassingProject(from: currentSnapshot)
+        if operation.kind == .edit {
+            guard let restoredCurrent, let passing = currentSnapshot.passingProject,
+                  passing.baseRevisionID == operation.baseRevisionID else {
+                await finishRecoveryFailure(
+                    run: run,
+                    summary: "Generation could not resume",
+                    detail: recoveryDetail(reason: reason, issue: "The current project for this edit was not available at its recorded base; the last playable game was preserved."),
+                    stage: .planning,
+                    candidateID: candidateID,
+                    operationID: operation.id,
+                    retryRound: operation.retryRound
+                )
+                return
+            }
+            project = restoredCurrent.project
+        }
+
+        let journalTransfers = run.backgroundTransfers
+        guard journalTransfers.allSatisfy({ transferMatches($0, run: run, operation: operation) }) else {
+            await finishRecoveryFailure(
+                run: run,
+                summary: "Background response rejected",
+                detail: recoveryDetail(reason: reason, issue: "A recorded provider transfer did not match this project's operation, candidate, or base identity."),
+                stage: .receiving,
+                candidateID: candidateID,
+                operationID: operation.id,
+                retryRound: operation.retryRound
+            )
+            return
+        }
+
+        let stagedCandidate: ProjectWorkspace.StagedProject?
+        if run.events.contains(where: { $0.kind == .candidateStaged }) {
+            do {
+                stagedCandidate = try workspace.load(candidateID: candidateID)
+            } catch {
+                await finishRecoveryFailure(
+                    run: run,
+                    summary: "Staged candidate unavailable",
+                    detail: recoveryDetail(reason: reason, issue: "The durable candidate checkpoint could not be reopened; the last playable game was preserved."),
+                    stage: .staging,
+                    candidateID: candidateID,
+                    operationID: operation.id,
+                    retryRound: operation.retryRound
+                )
+                return
+            }
+        } else {
+            stagedCandidate = nil
+        }
+
+        let selectedTransfer: BackgroundHTTPClient.TransferMetadata?
+        if stagedCandidate != nil {
+            selectedTransfer = nil
+        } else {
+            guard provider.supportsBackgroundContinuation,
+                  let recoveringProvider = provider as? any BackgroundRecoveringProvider,
+                  recoveringProvider.supportsBackgroundRecovery else {
+                await finishRecoveryFailure(
+                    run: run,
+                    summary: "Background response unavailable",
+                    detail: recoveryDetail(reason: reason, issue: "This provider cannot reattach the interrupted request; the last playable game was preserved."),
+                    stage: .receiving,
+                    candidateID: candidateID,
+                    operationID: operation.id,
+                    retryRound: operation.retryRound
+                )
+                return
+            }
+
+            let transfers: [BackgroundHTTPClient.TransferMetadata]
+            do {
+                transfers = try await recoveringProvider.recoverBackgroundTransfers(for: runID)
+            } catch {
+                await finishRecoveryFailure(
+                    run: run,
+                    summary: "Background response unavailable",
+                    detail: recoveryDetail(reason: reason, issue: "The background provider response could not be recovered safely; the last playable game was preserved."),
+                    stage: .receiving,
+                    candidateID: candidateID,
+                    operationID: operation.id,
+                    retryRound: operation.retryRound
+                )
+                return
+            }
+            guard transfers.allSatisfy({ transferMatches($0, run: run, operation: operation) }) else {
+                await finishRecoveryFailure(
+                    run: run,
+                    summary: "Background response rejected",
+                    detail: recoveryDetail(reason: reason, issue: "A recovered provider transfer did not match this project's operation, candidate, or base identity."),
+                    stage: .receiving,
+                    candidateID: candidateID,
+                    operationID: operation.id,
+                    retryRound: operation.retryRound
+                )
+                return
+            }
+            do {
+                for transfer in transfers { try await journal.recordBackgroundTransfer(appMetadata(for: transfer), runID: runID) }
+            } catch {
+                await finishRecoveryFailure(
+                    run: run,
+                    summary: "Background response unavailable",
+                    detail: recoveryDetail(reason: reason, issue: "The recovered transfer state could not be recorded durably; the last playable game was preserved."),
+                    stage: .receiving,
+                    candidateID: candidateID,
+                    operationID: operation.id,
+                    retryRound: operation.retryRound
+                )
+                return
+            }
+            guard let eligible = transfers.last(where: { $0.state == .running || $0.state == .completed }) else {
+                await finishRecoveryWithoutTransfer(run: run, reason: reason, transfers: transfers, operation: operation)
+                return
+            }
+            selectedTransfer = eligible
+        }
+
+        guard busyReservation == reservation else {
+            await finishRecoveryFailure(
+                run: run,
+                summary: "Generation recovery failed",
+                detail: recoveryDetail(reason: reason, issue: "The interrupted run lost recovery ownership; the last playable game was preserved."),
+                stage: .receiving,
+                candidateID: candidateID,
+                operationID: operation.id,
+                retryRound: operation.retryRound
+            )
+            return
+        }
 
         let recoveryLifecycle: RunLifecycle = isAppActive ? .foreground : .suspended
         let recoverySummary = isAppActive ? "Generation resumed" : "Background response recovered"
-        let recoveryDetail = isAppActive
+        let recoveryDetailText = isAppActive
             ? "The background provider response is being recovered in the foreground."
             : "The response is retained until Playloom returns to the foreground for validation."
         let resumed = GenerationEvent(
             id: UUID(), timestamp: Date(), projectID: run.projectID, runID: run.id,
-            candidateID: operation.candidateID, operationID: operation.id, baseRevisionID: operation.baseRevisionID,
-            kind: .lifecycleChanged, lifecycle: recoveryLifecycle, stage: .receiving,
-            summary: recoverySummary, detail: recoveryDetail,
+            candidateID: candidateID, operationID: operation.id, baseRevisionID: operation.baseRevisionID,
+            kind: .lifecycleChanged, lifecycle: recoveryLifecycle, stage: stagedCandidate == nil ? .receiving : .staging,
+            summary: recoverySummary, detail: recoveryDetailText,
             check: nil, fileDiff: nil, retryRound: operation.retryRound, durationMilliseconds: nil, usage: nil, backgroundTransfer: nil
         )
-        try? await appendAndPublish(resumed)
+        do {
+            try await appendAndPublish(resumed)
+        } catch {
+            await finishRecoveryFailure(
+                run: run,
+                summary: "Generation recovery failed",
+                detail: recoveryDetail(reason: reason, issue: "The recovery checkpoint could not be recorded; the last playable game was preserved."),
+                stage: .receiving,
+                candidateID: candidateID,
+                operationID: operation.id,
+                retryRound: operation.retryRound
+            )
+            return
+        }
 
         let context = RunContext(
             projectID: run.projectID,
@@ -261,7 +427,13 @@ final class GenerationOrchestrator {
         isWorking = true
         let task = Task { @MainActor [weak self] in
             guard let self else { return GenerationRunResult(runID: run.id, status: .failed, message: "Generation coordinator unavailable.", project: nil) }
-            return await self.perform(context: context, currentProject: nil, recoveredTransfer: transfer)
+            return await self.perform(
+                context: context,
+                currentProject: restoredCurrent?.project,
+                recoveredTransfer: selectedTransfer,
+                recoveredCandidate: stagedCandidate,
+                recoveredTransfers: journalTransfers
+            )
         }
         activeTask = task
     }
@@ -320,6 +492,17 @@ final class GenerationOrchestrator {
         do {
             _ = try await journal.createRun(baseRevisionID: baseRevisionID, operation: operation, runID: runID)
             guard busyReservation == reservation else {
+                await finishRecoveryFailure(
+                    run: await journal.run(runID) ?? GenerationRun(
+                        projectID: projectID, id: runID, createdAt: context.startedAt, lifecycle: .foreground,
+                        baseRevisionID: baseRevisionID, plan: nil, operations: [operation], events: [], outcome: nil
+                    ),
+                    summary: "Generation could not start",
+                    detail: "The durable run lost ownership before provider work began; the last playable game was preserved.",
+                    stage: .planning,
+                    candidateID: candidateID,
+                    operationID: operationID
+                )
                 return Task { GenerationRunResult(runID: runID, status: .failed, message: "Generation ownership changed before the run started.", project: nil) }
             }
             activeContext = context
@@ -342,7 +525,13 @@ final class GenerationOrchestrator {
         return task
     }
 
-    private func perform(context: RunContext, currentProject: GameProject?, recoveredTransfer: BackgroundHTTPClient.TransferMetadata? = nil) async -> GenerationRunResult {
+    private func perform(
+        context: RunContext,
+        currentProject: GameProject?,
+        recoveredTransfer: BackgroundHTTPClient.TransferMetadata? = nil,
+        recoveredCandidate: ProjectWorkspace.StagedProject? = nil,
+        recoveredTransfers: [BackgroundTransferMetadata] = []
+    ) async -> GenerationRunResult {
         if isAppActive { setIdleTimerDisabled(true) }
         defer {
             setIdleTimerDisabled(false)
@@ -358,11 +547,13 @@ final class GenerationOrchestrator {
 
         do {
             try Task.checkCancellation()
-            let candidate: GameProject
-            if let recoveredTransfer {
+            let output: GenerationProviderOutput
+            if let recoveredCandidate {
+                output = GenerationProviderOutput(project: recoveredCandidate.project, backgroundTransfers: recoveredTransfers)
+            } else if let recoveredTransfer {
                 try await emit(context: context, kind: .stageStarted, stage: .receiving, summary: "Reattaching provider response", detail: "Recovering the response delivered by the background transfer.")
-                guard let openCode = provider as? OpenCodeGoProvider else { throw OrchestratorError.unrecoverableTransfer }
-                candidate = try await openCode.recoverProject(from: recoveredTransfer)
+                guard let recoveringProvider = provider as? any BackgroundRecoveringProvider else { throw OrchestratorError.unrecoverableTransfer }
+                output = try await recoveringProvider.recoverProjectOutput(from: recoveredTransfer)
             } else {
                 try await emit(context: context, kind: .stageStarted, stage: .planning, summary: "Preparing generation", detail: "Recording the run before contacting the provider.")
                 try await emit(context: context, kind: .stageFinished, stage: .planning, summary: "Generation prepared", detail: "The run has stable project, operation, candidate, and base IDs.")
@@ -371,22 +562,37 @@ final class GenerationOrchestrator {
                 try await emit(context: context, kind: .stageStarted, stage: .generating, summary: "Generating your game", detail: "Contacting \(provider.displayName).")
                 switch context.kind {
                 case .generate:
-                    candidate = try await provider.generateProject(request: context.request)
+                    output = try await provider.generateProjectOutput(request: context.request)
                 case .edit:
                     guard let currentProject else { throw OrchestratorError.missingProject }
-                    candidate = try await provider.editProject(currentProject, request: context.request)
+                    output = try await provider.editProjectOutput(currentProject, request: context.request)
                 }
             }
+            let candidate = output.project
             try Task.checkCancellation()
-            let transfer = try await persistBackgroundTransferMetadata(for: context)
-            try await emit(context: context, kind: .providerOutputReceived, stage: .receiving, summary: recoveredTransfer == nil ? "Generation response received" : "Background response recovered", detail: "Playloom received a candidate from the provider.", backgroundTransfer: transfer)
+            guard output.backgroundTransfers.allSatisfy({ transferMatches($0, context: context) }) else { throw OrchestratorError.transferIdentityMismatch }
+            if output.backgroundTransfers.isEmpty {
+                try await emit(context: context, kind: .providerOutputReceived, stage: .receiving, summary: recoveredTransfer == nil ? "Generation response received" : "Background response recovered", detail: "Playloom received a candidate from the provider.")
+            } else {
+                for transfer in output.backgroundTransfers {
+                    try await journal.recordBackgroundTransfer(transfer, runID: context.runID)
+                    try await emit(context: context, kind: .providerOutputReceived, stage: .receiving, summary: recoveredTransfer == nil ? "Generation response received" : "Background response recovered", detail: "Playloom received a candidate from the provider.", backgroundTransfer: transfer)
+                }
+            }
 
             try await waitForForegroundIfNeeded()
             try Task.checkCancellation()
 
             try await emit(context: context, kind: .stageStarted, stage: .staging, summary: "Staging generated files", detail: "Checking project structure and copying the local Phaser runtime.")
-            let directory = try workspace.stage(candidate, candidateID: context.candidateID)
-            try await emit(context: context, kind: .candidateStaged, stage: .staging, summary: "Candidate staged", detail: "The candidate is isolated from the last playable game.", fileDiff: fileDiff(from: currentProject, to: candidate))
+            let directory: URL
+            if let recoveredCandidate {
+                directory = recoveredCandidate.directory
+                try await emit(context: context, kind: .stageFinished, stage: .staging, summary: "Candidate restored", detail: "The durable candidate checkpoint is being reused.")
+            } else {
+                directory = try workspace.stage(candidate, candidateID: context.candidateID)
+                try await emit(context: context, kind: .candidateStaged, stage: .staging, summary: "Candidate staged", detail: "The candidate is isolated from the last playable game.", fileDiff: fileDiff(from: currentProject, to: candidate))
+            }
+            try await provider.acknowledge(output)
             try await emit(context: context, kind: .stageFinished, stage: .staging, summary: "Files staged", detail: "The candidate is ready for a sandboxed runtime check.")
 
             try await emit(context: context, kind: .stageStarted, stage: .launching, summary: "Starting game runtime", detail: "Loading the candidate in a sandboxed WebKit view.")
@@ -399,7 +605,7 @@ final class GenerationOrchestrator {
             setIdleTimerDisabled(true)
             try await emit(context: context, kind: .stageStarted, stage: .checking, summary: "Checking playable candidate", detail: "Running Playloom's bridge, load, canvas, heartbeat, input, and restart checks.")
             await Task.yield()
-            let report = await runtimeCheck(checkingSession)
+            let report = try await runtimeCheck(checkingSession)
             try Task.checkCancellation()
             try await emitCheckEvents(context: context, report: report)
             try await emit(context: context, kind: .stageFinished, stage: .checking, summary: report.isPassing ? "Basic runtime passed" : "Candidate checks finished", detail: report.isPassing ? "The universal runtime checks passed." : "The candidate did not pass all required runtime checks.")
@@ -417,7 +623,7 @@ final class GenerationOrchestrator {
             }
             try Task.checkCancellation()
             guard cancellationRequestedRunID != context.runID else { throw CancellationError() }
-            let metadata = PassingProjectMetadata(baseRevisionID: context.baseRevisionID, title: candidate.title, filePaths: candidate.files.keys.sorted(), updatedAt: Date())
+        let metadata = PassingProjectMetadata(baseRevisionID: context.baseRevisionID, candidateID: context.candidateID, title: candidate.title, filePaths: candidate.files.keys.sorted(), updatedAt: Date())
             try Task.checkCancellation()
             guard cancellationRequestedRunID != context.runID else { throw CancellationError() }
             guard await journal.isActive(context.runID) else {
@@ -466,6 +672,7 @@ final class GenerationOrchestrator {
         let event = makeEvent(context: context, kind: .completed, lifecycle: .completed, stage: .checking, summary: "Playable", detail: "Basic runtime passed.", durationMilliseconds: duration)
         try await journal.finalize(outcome, with: event, runID: context.runID, passingProject: passingProject)
         publish(event)
+        cleanupTerminalTransport()
         _ = report
     }
 
@@ -476,6 +683,7 @@ final class GenerationOrchestrator {
         do {
             try await journal.finalize(outcome, with: event, runID: context.runID)
             publish(event)
+            cleanupTerminalTransport()
         } catch {
             // The in-memory result remains truthful if the journal itself cannot
             // be written; do not add an unpersisted second status message.
@@ -490,6 +698,7 @@ final class GenerationOrchestrator {
         do {
             try await journal.finalize(outcome, with: event, runID: context.runID)
             publish(event)
+            cleanupTerminalTransport()
         } catch {
             // The cancellation result is still honest in memory if persistence
             // fails; the next launch will show the interrupted journal state.
@@ -511,6 +720,7 @@ final class GenerationOrchestrator {
         do {
             try await journal.finalize(outcome, with: event, runID: context.runID)
             publish(event)
+            cleanupTerminalTransport()
         } catch {
             // A newer run already owns the project; there is no safe promotion.
         }
@@ -552,15 +762,129 @@ final class GenerationOrchestrator {
         )
     }
 
-    private func persistBackgroundTransferMetadata(for context: RunContext) async throws -> BackgroundTransferMetadata? {
-        guard let openCode = provider as? OpenCodeGoProvider else { return nil }
-        var latest: BackgroundTransferMetadata?
-        for transfer in openCode.backgroundTransferMetadata(for: context.runID) {
-            let metadata = appMetadata(for: transfer)
-            try await journal.recordBackgroundTransfer(metadata, runID: context.runID)
-            latest = metadata
+    private func finishRecoveryFailure(
+        run: GenerationRun,
+        summary: String,
+        detail: String,
+        stage: GenerationStage? = nil,
+        candidateID: CandidateID? = nil,
+        operationID: OperationID? = nil,
+        retryRound: Int? = nil
+    ) async {
+        do {
+            let event = try await journal.finalizeRecoveryFailure(
+                runID: run.id,
+                summary: summary,
+                detail: detail,
+                stage: stage,
+                candidateID: candidateID ?? run.operations.last?.candidateID,
+                operationID: operationID ?? run.operations.last?.id,
+                retryRound: retryRound ?? run.operations.last?.retryRound
+            )
+            publish(event)
+            cleanupTerminalTransport()
+        } catch {
+            // A failed disk write cannot be made terminal in memory. Leave the
+            // active journal intact for a later launch and allow a retry rather
+            // than claiming that recovery completed.
+            didAttemptLaunchRecovery = false
+            await refreshEvents(for: run.id)
         }
-        return latest
+    }
+
+    private func finishRecoveryCancellation(run: GenerationRun, operation: GenerationOperation, reason: RunRecoveryReason) async {
+        let detail = recoveryDetail(reason: reason, issue: "Stop was requested before the interrupted provider response could be recovered; the last playable game was preserved.")
+        do {
+            let event = try await journal.finalizeRecoveryCancellation(
+                runID: run.id,
+                detail: detail,
+                stage: run.currentStage,
+                candidateID: operation.candidateID,
+                operationID: operation.id,
+                retryRound: operation.retryRound
+            )
+            publish(event)
+            cleanupTerminalTransport()
+        } catch {
+            didAttemptLaunchRecovery = false
+            await refreshEvents(for: run.id)
+        }
+    }
+
+    private func finishRecoveryWithoutTransfer(
+        run: GenerationRun,
+        reason: RunRecoveryReason,
+        transfers: [BackgroundHTTPClient.TransferMetadata],
+        operation: GenerationOperation
+    ) async {
+        let states = Set(transfers.map(\.state))
+        let stopWasRequested = run.events.contains { $0.kind == .cancellationRequested }
+        if stopWasRequested && states == [.cancelled] {
+            await finishRecoveryCancellation(run: run, operation: operation, reason: reason)
+            return
+        }
+
+        let summary: String
+        let issue: String
+        if transfers.isEmpty {
+            summary = "Recovery could not find a response"
+            issue = "No background provider transfer was recorded for the active run."
+        } else if states == [.failed] {
+            summary = "Background response failed"
+            issue = "The recorded background provider transfer failed before recovery."
+        } else if states == [.interrupted] {
+            summary = "Background response interrupted"
+            issue = "The recorded background provider transfer was interrupted before it could be reattached."
+        } else if states == [.cancelled] {
+            summary = "Background response cancelled"
+            issue = "The recorded background provider transfer was cancelled before recovery without a durable Stop request."
+        } else {
+            summary = "Background response unavailable"
+            issue = "Every recorded background provider transfer was failed, cancelled, or interrupted."
+        }
+        await finishRecoveryFailure(
+            run: run,
+            summary: summary,
+            detail: recoveryDetail(reason: reason, issue: "\(issue) The last playable game was preserved."),
+            stage: .receiving,
+            candidateID: operation.candidateID,
+            operationID: operation.id,
+            retryRound: operation.retryRound
+        )
+    }
+
+    private func recoveryDetail(reason: RunRecoveryReason, issue: String) -> String {
+        let lifecycle = switch reason {
+        case .osRelaunchInterrupted: "The operating system relaunched Playloom after interrupting this run."
+        case .forceQuitUnknown: "Playloom was relaunched after a force-quit, so continuation of this run cannot be confirmed."
+        }
+        return "\(lifecycle) \(issue)"
+    }
+
+    private func transferMatches(_ transfer: BackgroundTransferMetadata, run: GenerationRun, operation: GenerationOperation) -> Bool {
+        transfer.projectID == run.projectID && transfer.runID == run.id && transfer.operationID == operation.id
+            && transfer.candidateID == operation.candidateID && transfer.baseRevisionID == operation.baseRevisionID
+    }
+
+    private func transferMatches(_ transfer: BackgroundHTTPClient.TransferMetadata, run: GenerationRun, operation: GenerationOperation) -> Bool {
+        transfer.projectID == run.projectID && transfer.runID == run.id && transfer.operationID == operation.id
+            && transfer.candidateID == operation.candidateID && transfer.baseRevisionID == operation.baseRevisionID
+    }
+
+    private func transferMatches(_ transfer: BackgroundTransferMetadata, context: RunContext) -> Bool {
+        transfer.projectID == context.projectID && transfer.runID == context.runID && transfer.operationID == context.operationID
+            && transfer.candidateID == context.candidateID && transfer.baseRevisionID == context.baseRevisionID
+    }
+
+    private func loadPassingProject(from snapshot: RunJournalDocument) -> ProjectWorkspace.StagedProject? {
+        guard let metadata = snapshot.passingProject, let candidateID = metadata.candidateID,
+              let staged = try? workspace.load(candidateID: candidateID), staged.project.title == metadata.title else { return nil }
+        return staged
+    }
+
+    private func cleanupTerminalTransport(retaining runIDs: Set<RunID> = []) {
+        guard let recoveringProvider = provider as? any BackgroundRecoveringProvider else { return }
+        try? recoveringProvider.cleanupTerminalTransfers(retaining: runIDs)
     }
 
     private func appMetadata(for transfer: BackgroundHTTPClient.TransferMetadata) -> BackgroundTransferMetadata {
@@ -576,6 +900,8 @@ final class GenerationOrchestrator {
             projectID: transfer.projectID,
             runID: transfer.runID,
             operationID: transfer.operationID,
+            candidateID: transfer.candidateID,
+            baseRevisionID: transfer.baseRevisionID,
             requestBodyURL: transfer.requestBodyURL.path,
             responseURL: transfer.responseURL.path,
             state: state,
@@ -650,4 +976,4 @@ final class GenerationOrchestrator {
     }
 }
 
-nonisolated enum OrchestratorError: Error { case missingProject, unrecoverableTransfer }
+nonisolated enum OrchestratorError: Error { case missingProject, unrecoverableTransfer, transferIdentityMismatch }

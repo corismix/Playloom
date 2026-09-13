@@ -7,9 +7,10 @@ struct ActivityCard: View {
     let onStop: (() -> Void)?
     @State private var isExpanded = false
 
-    init(activity: GenerationActivity, onStop: (() -> Void)? = nil) {
+    init(activity: GenerationActivity, onStop: (() -> Void)? = nil, initiallyExpanded: Bool = false) {
         self.activity = activity
         self.onStop = onStop
+        _isExpanded = State(initialValue: initiallyExpanded)
     }
 
     var body: some View {
@@ -29,7 +30,7 @@ struct ActivityCard: View {
         } label: {
             HStack(spacing: 8) {
                 if activity.isActive { ProgressView().controlSize(.small) }
-                Text(activity.collapsedSummary)
+                MarkdownSummaryView(markdown: activity.collapsedSummary)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                     .accessibilityIdentifier("generation.activity.summary")

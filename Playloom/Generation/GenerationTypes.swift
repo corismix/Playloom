@@ -56,6 +56,26 @@ nonisolated enum RunRecoveryReason: String, Codable, Equatable, Sendable { case 
 nonisolated enum GenerationOutcomeStatus: String, Codable, Equatable, Sendable { case completed, failed, cancelled }
 nonisolated enum BackgroundTransferState: String, Codable, Equatable, Sendable { case running, completed, failed, cancelled, interrupted }
 
+nonisolated enum BackgroundTransferHeaderPolicy {
+    static let persistedNames: Set<String> = ["content-type", "content-length", "retry-after"]
+
+    static func sanitize(_ headers: [AnyHashable: Any]) -> [String: String] {
+        headers.reduce(into: [:]) { result, item in
+            let name = String(describing: item.key).lowercased()
+            guard persistedNames.contains(name) else { return }
+            result[name] = String(describing: item.value)
+        }
+    }
+
+    static func sanitize(_ headers: [String: String]) -> [String: String] {
+        headers.reduce(into: [:]) { result, item in
+            let name = item.key.lowercased()
+            guard persistedNames.contains(name) else { return }
+            result[name] = item.value
+        }
+    }
+}
+
 nonisolated struct GenerationPlan: Codable, Equatable, Sendable {
     var coreLoop: String
     var actions: [String]
@@ -102,6 +122,8 @@ nonisolated struct BackgroundTransferMetadata: Codable, Equatable, Sendable {
     let projectID: ProjectID?
     let runID: RunID?
     let operationID: OperationID?
+    let candidateID: CandidateID?
+    let baseRevisionID: BaseRevisionID?
     let requestBodyURL: String?
     let responseURL: String?
     let providerRequestID: String?
@@ -115,6 +137,8 @@ nonisolated struct BackgroundTransferMetadata: Codable, Equatable, Sendable {
         projectID: ProjectID? = nil,
         runID: RunID? = nil,
         operationID: OperationID? = nil,
+        candidateID: CandidateID? = nil,
+        baseRevisionID: BaseRevisionID? = nil,
         requestBodyURL: String? = nil,
         responseURL: String? = nil,
         providerRequestID: String? = nil,
@@ -127,13 +151,56 @@ nonisolated struct BackgroundTransferMetadata: Codable, Equatable, Sendable {
         self.projectID = projectID
         self.runID = runID
         self.operationID = operationID
+        self.candidateID = candidateID
+        self.baseRevisionID = baseRevisionID
         self.requestBodyURL = requestBodyURL
         self.responseURL = responseURL
         self.providerRequestID = providerRequestID
         self.state = state
         self.updatedAt = updatedAt
         self.statusCode = statusCode
-        self.responseHeaders = responseHeaders
+        self.responseHeaders = BackgroundTransferHeaderPolicy.sanitize(responseHeaders)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case taskIdentifier, projectID, runID, operationID, candidateID, baseRevisionID
+        case requestBodyURL, responseURL, providerRequestID, state, updatedAt, statusCode, responseHeaders
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            taskIdentifier: try container.decode(Int.self, forKey: .taskIdentifier),
+            projectID: try container.decodeIfPresent(ProjectID.self, forKey: .projectID),
+            runID: try container.decodeIfPresent(RunID.self, forKey: .runID),
+            operationID: try container.decodeIfPresent(OperationID.self, forKey: .operationID),
+            candidateID: try container.decodeIfPresent(CandidateID.self, forKey: .candidateID),
+            baseRevisionID: try container.decodeIfPresent(BaseRevisionID.self, forKey: .baseRevisionID),
+            requestBodyURL: try container.decodeIfPresent(String.self, forKey: .requestBodyURL),
+            responseURL: try container.decodeIfPresent(String.self, forKey: .responseURL),
+            providerRequestID: try container.decodeIfPresent(String.self, forKey: .providerRequestID),
+            state: try container.decode(BackgroundTransferState.self, forKey: .state),
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt),
+            statusCode: try container.decodeIfPresent(Int.self, forKey: .statusCode),
+            responseHeaders: try container.decodeIfPresent([String: String].self, forKey: .responseHeaders) ?? [:]
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(taskIdentifier, forKey: .taskIdentifier)
+        try container.encodeIfPresent(projectID, forKey: .projectID)
+        try container.encodeIfPresent(runID, forKey: .runID)
+        try container.encodeIfPresent(operationID, forKey: .operationID)
+        try container.encodeIfPresent(candidateID, forKey: .candidateID)
+        try container.encodeIfPresent(baseRevisionID, forKey: .baseRevisionID)
+        try container.encodeIfPresent(requestBodyURL, forKey: .requestBodyURL)
+        try container.encodeIfPresent(responseURL, forKey: .responseURL)
+        try container.encodeIfPresent(providerRequestID, forKey: .providerRequestID)
+        try container.encode(state, forKey: .state)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(statusCode, forKey: .statusCode)
+        try container.encode(BackgroundTransferHeaderPolicy.sanitize(responseHeaders), forKey: .responseHeaders)
     }
 }
 
@@ -170,9 +237,37 @@ nonisolated struct GenerationOutcome: Codable, Equatable, Sendable {
 
 nonisolated struct PassingProjectMetadata: Codable, Equatable, Sendable {
     let baseRevisionID: BaseRevisionID
+    let candidateID: CandidateID?
     let title: String
     let filePaths: [String]
     let updatedAt: Date
+
+    init(
+        baseRevisionID: BaseRevisionID,
+        candidateID: CandidateID? = nil,
+        title: String,
+        filePaths: [String],
+        updatedAt: Date
+    ) {
+        self.baseRevisionID = baseRevisionID
+        self.candidateID = candidateID
+        self.title = title
+        self.filePaths = filePaths
+        self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey { case baseRevisionID, candidateID, title, filePaths, updatedAt }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            baseRevisionID: try container.decode(BaseRevisionID.self, forKey: .baseRevisionID),
+            candidateID: try container.decodeIfPresent(CandidateID.self, forKey: .candidateID),
+            title: try container.decode(String.self, forKey: .title),
+            filePaths: try container.decode([String].self, forKey: .filePaths),
+            updatedAt: try container.decode(Date.self, forKey: .updatedAt)
+        )
+    }
 }
 
 nonisolated struct GenerationRun: Codable, Equatable, Sendable {

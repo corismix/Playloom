@@ -67,7 +67,7 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
     func probeInput() async throws {
         guard let webView else { throw RuntimeSessionError.notStarted }
         _ = try? await webView.callAsyncJavaScript("window.playloomProbeInput?.()", arguments: [:], in: nil, contentWorld: .page)
-        if await waitFor({ $0 == .inputReceived }, timeout: .milliseconds(350)) { return }
+        if try await waitFor({ $0 == .inputReceived }, timeout: .milliseconds(350)) { return }
         _ = try await webView.callAsyncJavaScript(Self.touchPointerProbeScript, arguments: [:], in: nil, contentWorld: .page)
     }
 
@@ -145,12 +145,13 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         return "\(startupDiagnostic); \(hierarchy); page=\(page); \(eventSummary)"
     }
 
-    func waitForHeartbeat(after count: Int, timeout: Duration) async -> Bool {
+    func waitForHeartbeat(after count: Int, timeout: Duration) async throws -> Bool {
         let clock = ContinuousClock(); let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
+            try Task.checkCancellation()
             let current = events.filter { if case .heartbeat = $0 { return true }; return false }.count
             if current > count { return true }
-            try? await clock.sleep(for: .milliseconds(100))
+            try await clock.sleep(for: .milliseconds(100))
         }
         return false
     }
@@ -165,13 +166,15 @@ final class GameRuntimeSession: NSObject, WKNavigationDelegate, WKScriptMessageH
         return !blockedNavigations.isEmpty
     }
 
-    func waitFor(_ predicate: @escaping (RuntimeEvent) -> Bool, timeout: Duration) async -> Bool {
+    func waitFor(_ predicate: @escaping (RuntimeEvent) -> Bool, timeout: Duration) async throws -> Bool {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while clock.now < deadline {
+            try Task.checkCancellation()
             if events.contains(where: predicate) { return true }
-            try? await clock.sleep(for: .milliseconds(25))
+            try await clock.sleep(for: .milliseconds(25))
         }
+        try Task.checkCancellation()
         return events.contains(where: predicate)
     }
 

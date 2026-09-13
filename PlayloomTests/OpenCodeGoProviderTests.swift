@@ -6,6 +6,19 @@ final class OpenCodeGoProviderTests: XCTestCase {
  func testResponseShapeIsBounded() { let shape=OpenCodeGoProvider.responseShape(String(repeating:"a",count:1000)); XCTAssertLessThan(shape.count,240); XCTAssertTrue(shape.contains("chars=1000")) }
  func testConversationIDCanBeStable(){let provider=OpenCodeGoProvider(keyStore:TestKeyStore(),conversationID:"project-conversation-1");XCTAssertNotNil(provider)}
  func testSanitizedErrorIsBoundedAndRedactsBearerMarker(){let data=Data(("{\"error\":\"Bearer secret\"}"+String(repeating:"x",count:2000)).utf8);let message=OpenCodeGoProvider.sanitizedError(data);XCTAssertFalse(message.contains("Bearer secret"));XCTAssertLessThanOrEqual(message.count,1010)}
+ func testDefaultOutputAdapterPreservesLegacyProviderAndHasNoTransfers() async throws {
+     let provider = LegacyProvider()
+     let output = try await provider.generateProjectOutput(request: GenerationRequest(operation: .generate, projectID: ProjectID(), runID: RunID(), baseRevisionID: BaseRevisionID(), prompt: "game"))
+     XCTAssertEqual(output.project.title, "Legacy")
+     XCTAssertTrue(output.backgroundTransfers.isEmpty)
+     try await provider.acknowledge(output)
+ }
+}
+private struct LegacyProvider: ModelProvider {
+    let displayName = "Legacy"
+    func generateProject(prompt: String) async throws -> GameProject { project }
+    func editProject(_ project: GameProject, instruction: String) async throws -> GameProject { project }
+    private var project: GameProject { GameProject(title: "Legacy", files: ["index.html": "", "game.js": "", "style.css": ""]) }
 }
 private struct TestKeyStore:APIKeyStoring{func read()throws->String?{"x"};func save(_ key:String)throws{};func delete()throws{}}
 

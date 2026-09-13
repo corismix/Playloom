@@ -79,6 +79,35 @@ final class GenerationJournalTests: XCTestCase {
         XCTAssertEqual(snapshot.passingProject, passingProject)
     }
 
+    func testJournalRejectsBackgroundTransferWithoutFullRunIdentity() async throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let runID = try await RunJournal(fileURL: url, projectID: projectID).createRun(baseRevisionID: baseRevisionID)
+        let missingCandidate = BackgroundTransferMetadata(
+            taskIdentifier: 61,
+            projectID: projectID,
+            runID: runID,
+            operationID: OperationID(),
+            candidateID: nil,
+            baseRevisionID: baseRevisionID,
+            state: .completed
+        )
+        let journal = try RunJournal(fileURL: url, projectID: projectID)
+
+        do {
+            try await journal.recordBackgroundTransfer(missingCandidate, runID: runID)
+            XCTFail("Expected incomplete transfer identity to be rejected")
+        } catch RunJournalError.invalidEvent {
+            // Expected: transport records are never journaled without operation,
+            // candidate, and base identities.
+        }
+
+        let transfers = await journal.backgroundTransfers(for: runID)
+        let activeRunID = (await journal.snapshot()).activeRunID
+        XCTAssertTrue(transfers.isEmpty)
+        XCTAssertEqual(activeRunID, runID)
+    }
+
     private func event(summary: String, runID: RunID, kind: GenerationEventKind, stage: GenerationStage) -> GenerationEvent {
         GenerationEvent(id: UUID(), timestamp: Date(timeIntervalSince1970: 30), projectID: projectID, runID: runID, candidateID: nil, operationID: nil, baseRevisionID: baseRevisionID, kind: kind, lifecycle: nil, stage: stage, summary: summary, detail: nil, check: nil, fileDiff: nil, retryRound: nil, durationMilliseconds: nil, usage: nil, backgroundTransfer: nil)
     }

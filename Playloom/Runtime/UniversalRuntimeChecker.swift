@@ -2,14 +2,15 @@ import Foundation
 
 @MainActor
 struct UniversalRuntimeChecker {
-    func run(session: GameRuntimeSession) async -> RuntimeReport {
+    func run(session: GameRuntimeSession) async throws -> RuntimeReport {
         var passed: [String] = []
         var failures: [String] = []
 
         // Wait once for game readiness. A generated ready event travels through the same
         // script-message handler and therefore also proves the WebKit bridge. Keeping these
         // labels separate preserves the report without creating two sequential timeout races.
-        let gameReady = await session.waitFor({ $0 == .ready }, timeout: .seconds(15))
+        try Task.checkCancellation()
+        let gameReady = try await session.waitFor({ $0 == .ready }, timeout: .seconds(15))
         if gameReady || session.events.contains(.bridgeReady) { passed.append("WebKit bridge ready") }
         if gameReady { passed.append("loads") }
         else { failures.append("game ready timeout: " + session.startupDiagnostic) }
@@ -23,10 +24,12 @@ struct UniversalRuntimeChecker {
         else { failures.append("JavaScript: " + fatal.joined(separator: "; ")) }
 
         // `ready` may precede final SwiftUI layout and the first stable WebGL frame on device.
-        try? await ContinuousClock().sleep(for: .seconds(2))
+        try await ContinuousClock().sleep(for: .seconds(2))
+        try Task.checkCancellation()
 
         do {
             let pixels = try await session.sampleVisiblePixels()
+            try Task.checkCancellation()
             if pixels.isNonBlank { passed.append("canvas not blank") }
             else { failures.append("blank canvas") }
         } catch { failures.append("pixel sample failed: \(error.localizedDescription)") }
@@ -36,22 +39,26 @@ struct UniversalRuntimeChecker {
         // for another when startup yielded fewer than two (slow device/runner).
         let heartbeatAlive: Bool
         if initialFrames >= 2 { heartbeatAlive = true }
-        else { heartbeatAlive = await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3)) }
+        else { heartbeatAlive = try await session.waitForHeartbeat(after: initialFrames, timeout: .seconds(3)) }
+        try Task.checkCancellation()
         if heartbeatAlive { passed.append("heartbeat alive") }
         else { failures.append("heartbeat stalled") }
 
         do {
             try await session.probeInput()
-            if await session.waitFor({ $0 == .inputReceived }, timeout: .seconds(1)) { passed.append("input works") }
+            try Task.checkCancellation()
+            if try await session.waitFor({ $0 == .inputReceived }, timeout: .seconds(1)) { passed.append("input works") }
             else { failures.append("input probe failed") }
         } catch { failures.append("input probe failed") }
 
         do {
             try await session.restart()
-            if await session.waitFor({ $0 == .restarted }, timeout: .seconds(1)) { passed.append("restart works") }
+            try Task.checkCancellation()
+            if try await session.waitFor({ $0 == .restarted }, timeout: .seconds(1)) { passed.append("restart works") }
             else { failures.append("restart failed") }
         } catch { failures.append("restart failed") }
 
+        try Task.checkCancellation()
         if !failures.isEmpty {
             let diagnostic = await session.diagnosticSnapshot()
             print("PLAYLOOM_RUNTIME_DIAGNOSTIC \(diagnostic)")

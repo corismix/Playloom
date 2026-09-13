@@ -16,7 +16,7 @@ final class ActivityCardTests: XCTestCase {
         XCTAssertTrue(activity.isActive)
         XCTAssertEqual(activity.events.count, 2)
 
-        let host = UIHostingController(rootView: ActivityCard(activity: activity, onStop: {}))
+        let host = UIHostingController(rootView: ActivityCard(activity: activity, onStop: {}, initiallyExpanded: true))
         host.loadViewIfNeeded()
         XCTAssertNotNil(host.view)
     }
