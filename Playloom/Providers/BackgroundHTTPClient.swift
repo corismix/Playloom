@@ -1,66 +1,315 @@
 import Foundation
 
-/// Runs long provider uploads in an iOS background URL session. The system may
-/// suspend the UI process while the request continues and relaunch it to deliver completion.
+nonisolated protocol BackgroundTransferStoring: Sendable {
+    func load() throws -> [BackgroundHTTPClient.TransferRecord]
+    func save(_ records: [BackgroundHTTPClient.TransferRecord]) throws
+}
+
+nonisolated final class ApplicationSupportTransferStore: BackgroundTransferStoring, @unchecked Sendable {
+    private let fileURL: URL
+    init(fileURL: URL? = nil) {
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Playloom/ProviderTransport", directoryHint: .isDirectory)
+        self.fileURL = fileURL ?? root.appending(path: "transfers.json")
+    }
+    func load() throws -> [BackgroundHTTPClient.TransferRecord] {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
+        return try JSONDecoder().decode([BackgroundHTTPClient.TransferRecord].self, from: Data(contentsOf: fileURL))
+    }
+    func save(_ records: [BackgroundHTTPClient.TransferRecord]) throws {
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(records).write(to: fileURL, options: .atomic)
+    }
+}
+
 nonisolated final class BackgroundHTTPClient: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = BackgroundHTTPClient()
     static let identifier = "dev.corismix.playloom.provider-background"
+    nonisolated enum TransferState: String, Codable, Sendable { case running, completed, failed, cancelled, interrupted }
+    nonisolated struct TransferRecord: Codable, Equatable, Sendable {
+        let taskIdentifier: Int; let requestBodyURL: URL; let responseURL: URL
+        let projectID: ProjectID; let runID: RunID; let operationID: OperationID
+        let candidateID: CandidateID?; let baseRevisionID: BaseRevisionID
+        var state: TransferState; var responseStatus: Int?; var responseHeaders: [String: String]
+        var errorDescription: String?; var updatedAt: Date = Date()
+    }
+    nonisolated struct TransferResponse: Sendable {
+        let data: Data
+        let response: URLResponse
+        let taskIdentifier: Int
+    }
+    struct TransferMetadata: Equatable, Sendable {
+        let taskIdentifier: Int; let requestBodyURL: URL; let responseURL: URL
+        let projectID: ProjectID; let runID: RunID; let operationID: OperationID
+        let candidateID: CandidateID?; let baseRevisionID: BaseRevisionID
+        let state: TransferState; let responseStatus: Int?; let responseHeaders: [String: String]
+        let updatedAt: Date
+    }
+    enum Error: Swift.Error { case interrupted, missingResponse, persistenceFailure }
 
-    private struct State { var data = Data(); let continuation: CheckedContinuation<(Data, URLResponse), Error>; let bodyURL: URL }
-    private let lock = NSLock()
-    private var states: [Int: State] = [:]
-    private var backgroundCompletion: (() -> Void)?
-    private let sessionBox = SessionBox()
+    private final class Pending: @unchecked Sendable {
+        let bodyURL: URL; var continuation: CheckedContinuation<TransferResponse, Swift.Error>?; var finished = false
+        init(bodyURL: URL, continuation: CheckedContinuation<TransferResponse, Swift.Error>) { self.bodyURL = bodyURL; self.continuation = continuation }
+    }
+    private final class CancellationBox: @unchecked Sendable { var task: URLSessionUploadTask? }
+    private let store: BackgroundTransferStoring
+    private let storeLoadFailed: Bool
+    private let lock = NSLock(); private var records: [Int: TransferRecord]; private var pending: [Int: Pending] = [:]; private var tasks: [Int: URLSessionTask] = [:]
+    private var backgroundCompletion: (() -> Void)?; private let sessionBox = SessionBox()
     private var session: URLSession {
         lock.withLock {
-            if let session = sessionBox.value { return session }
+            if let value = sessionBox.value { return value }
             let configuration = URLSessionConfiguration.background(withIdentifier: Self.identifier)
-            configuration.isDiscretionary = false
-            configuration.sessionSendsLaunchEvents = true
-            configuration.timeoutIntervalForRequest = 300
-            configuration.timeoutIntervalForResource = 600
-            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-            sessionBox.value = session
-            return session
+            configuration.isDiscretionary = false; configuration.sessionSendsLaunchEvents = true
+            configuration.timeoutIntervalForRequest = 300; configuration.timeoutIntervalForResource = 600
+            let value = URLSession(configuration: configuration, delegate: self, delegateQueue: nil); sessionBox.value = value; return value
         }
     }
 
-    func upload(for request: URLRequest, body: Data) async throws -> (Data, URLResponse) {
-        let bodyURL = FileManager.default.temporaryDirectory.appending(path: "playloom-provider-\(UUID().uuidString).json")
+    init(store: BackgroundTransferStoring = ApplicationSupportTransferStore(), session: URLSession? = nil) {
+        self.store = store
+        let loadedRecords: [TransferRecord]
+        do {
+            loadedRecords = try store.load()
+            self.storeLoadFailed = false
+        } catch {
+            loadedRecords = []
+            self.storeLoadFailed = true
+        }
+        self.records = loadedRecords.reduce(into: [:]) { $0[$1.taskIdentifier] = $1 }
+        super.init(); if let session { sessionBox.value = session }
+    }
+
+    func upload(for request: URLRequest, body: Data, context: GenerationRequest) async throws -> TransferResponse {
+        try ensureStoreLoaded()
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Playloom/ProviderTransport", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let bodyURL = root.appending(path: "request-\(UUID().uuidString).json")
+        let responseURL = root.appending(path: "response-\(UUID().uuidString).bin")
         try body.write(to: bodyURL, options: .atomic)
-        return try await withCheckedThrowingContinuation { continuation in
-            var request = request; request.httpBody = nil
-            let task = session.uploadTask(with: request, fromFile: bodyURL)
-            lock.withLock { states[task.taskIdentifier] = State(continuation: continuation, bodyURL: bodyURL) }
-            task.resume()
+        try Data().write(to: responseURL, options: .atomic)
+        var request = request; request.httpBody = nil; let cancellation = CancellationBox()
+        return try await withTaskCancellationHandler(operation: {
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TransferResponse, Swift.Error>) in
+                let task = session.uploadTask(with: request, fromFile: bodyURL); cancellation.task = task
+                let record = TransferRecord(taskIdentifier: task.taskIdentifier, requestBodyURL: bodyURL, responseURL: responseURL,
+                    projectID: context.projectID, runID: context.runID, operationID: context.operationID, candidateID: context.candidateID,
+                    baseRevisionID: context.baseRevisionID, state: .running, responseStatus: nil, responseHeaders: [:], errorDescription: nil)
+                do {
+                    try lock.withLock {
+                        pending[task.taskIdentifier] = Pending(bodyURL: bodyURL, continuation: continuation)
+                        records[task.taskIdentifier] = record
+                        tasks[task.taskIdentifier] = task
+                        try persistLocked()
+                    }
+                    if Task.isCancelled { finishCancelled(task.taskIdentifier) } else { task.resume() }
+                } catch {
+                    lock.withLock {
+                        pending.removeValue(forKey: task.taskIdentifier)
+                        records.removeValue(forKey: task.taskIdentifier)
+                        tasks.removeValue(forKey: task.taskIdentifier)
+                    }
+                    try? FileManager.default.removeItem(at: bodyURL)
+                    try? FileManager.default.removeItem(at: responseURL)
+                    task.cancel()
+                    continuation.resume(throwing: Error.persistenceFailure)
+                }
+            }
+        }, onCancel: { [weak self, weak cancellation] in
+            self?.finishCancelled(cancellation?.task?.taskIdentifier)
+        })
+    }
+
+    func recover() async throws -> [TransferMetadata] {
+        try ensureStoreLoaded()
+        let tasks = await withCheckedContinuation { continuation in session.getAllTasks { continuation.resume(returning: $0) } }
+        let ids = Set(tasks.map(\.taskIdentifier))
+        return try lock.withLock {
+            self.tasks = Dictionary(uniqueKeysWithValues: tasks.map { ($0.taskIdentifier, $0) })
+            for (id, var record) in records where record.state == .running && !ids.contains(id) {
+                record.state = .interrupted; record.errorDescription = "Background task was not recoverable after relaunch"; records[id] = record
+            }
+            try persistLocked()
+            return records.values.map(metadata).sorted { $0.taskIdentifier < $1.taskIdentifier }
         }
     }
 
-    func handleEvents(completion: @escaping () -> Void) {
-        lock.withLock { backgroundCompletion = completion }
+    func recover(for runID: RunID) async throws -> [TransferMetadata] {
+        try await recover().filter { $0.runID == runID }
+    }
+
+    func metadata(for runID: RunID) -> [TransferMetadata] {
+        lock.withLock { records.values.filter { $0.runID == runID }.map(metadata).sorted { $0.taskIdentifier < $1.taskIdentifier } }
+    }
+
+    func waitForTransfer(taskIdentifier: Int) async throws -> TransferResponse {
+        try await withTaskCancellationHandler(operation: {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TransferResponse, Swift.Error>) in
+                let registration: WaitRegistration = lock.withLock {
+                    if Task.isCancelled { return .failure(Swift.CancellationError()) }
+                    guard let record = records[taskIdentifier] else { return .failure(Error.interrupted) }
+                    switch record.state {
+                    case .running:
+                        pending[taskIdentifier] = Pending(bodyURL: record.requestBodyURL, continuation: continuation)
+                        return .waiting
+                    case .completed:
+                        do { return .ready(try completedResponse(for: record)) }
+                        catch { return .failure(error) }
+                    case .failed, .cancelled, .interrupted:
+                        return .failure(Error.interrupted)
+                    }
+                }
+                switch registration {
+                case .waiting:
+                    if Task.isCancelled { finishCancelled(taskIdentifier) }
+                case .ready(let response):
+                    continuation.resume(returning: response)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+        }, onCancel: { [weak self] in
+            self?.finishCancelled(taskIdentifier)
+        })
+    }
+    func handleEvents(completion: @escaping () -> Void) { lock.withLock { backgroundCompletion = completion } }
+
+    /// Removes a completed transfer only after its response has been decoded and
+    /// accepted by the provider. A crash before this acknowledgement leaves the
+    /// body, response, and run identity available for the next launch.
+    func acknowledgeTransfer(taskIdentifier: Int) throws {
+        try lock.withLock {
+            try ensureStoreLoaded()
+            guard let record = records[taskIdentifier], record.state == .completed else { return }
+            records.removeValue(forKey: taskIdentifier)
+            do {
+                try persistLocked()
+            } catch {
+                records[taskIdentifier] = record
+                throw error
+            }
+            tasks.removeValue(forKey: taskIdentifier)
+            try? FileManager.default.removeItem(at: record.requestBodyURL)
+            try? FileManager.default.removeItem(at: record.responseURL)
+        }
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        lock.withLock { states[dataTask.taskIdentifier]?.data.append(data) }
+        var writeFailed = false
+        lock.withLock {
+            guard let record = records[dataTask.taskIdentifier] else { return }
+            let existing = (try? Data(contentsOf: record.responseURL)) ?? Data()
+            var combined = existing
+            combined.append(data)
+            do { try combined.write(to: record.responseURL, options: .atomic) }
+            catch { writeFailed = true }
+        }
+        if writeFailed { failTransfer(dataTask.taskIdentifier) }
     }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let state = lock.withLock { states.removeValue(forKey: task.taskIdentifier) }
-        guard let state else { return }
-        try? FileManager.default.removeItem(at: state.bodyURL)
-        if let error { state.continuation.resume(throwing: error) }
-        else if let response = task.response { state.continuation.resume(returning: (state.data, response)) }
-        else { state.continuation.resume(throwing: URLError(.badServerResponse)) }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Swift.Error?) {
+        lock.withLock {
+            guard var record = records[task.taskIdentifier] else { return }
+            if record.state == .failed || record.state == .interrupted { return }
+            let cancellationWasRequested = record.state == .cancelled
+            record.state = cancellationWasRequested || isCancellation(error) ? .cancelled : (error == nil ? .completed : .failed)
+            record.errorDescription = error?.localizedDescription; record.updatedAt = Date()
+            if let response = task.response as? HTTPURLResponse {
+                record.responseStatus = response.statusCode
+                record.responseHeaders = response.allHeaderFields.reduce(into: [:]) { $0[String(describing: $1.key)] = String(describing: $1.value) }
+            }
+            records[task.taskIdentifier] = record
+            var persistenceFailed = false
+            do { try persistLocked() } catch {
+                persistenceFailed = true
+                record.state = .failed
+                record.errorDescription = "Transfer metadata could not be saved"
+                records[task.taskIdentifier] = record
+            }
+            tasks.removeValue(forKey: task.taskIdentifier)
+            guard let value = pending.removeValue(forKey: task.taskIdentifier), !value.finished else { return }
+            value.finished = true
+            if persistenceFailed { value.continuation?.resume(throwing: Error.persistenceFailure) }
+            else if let error { value.continuation?.resume(throwing: error) }
+            else if let response = task.response, let data = try? Data(contentsOf: record.responseURL) {
+                value.continuation?.resume(returning: TransferResponse(data: data, response: response, taskIdentifier: task.taskIdentifier))
+            } else { value.continuation?.resume(throwing: Error.missingResponse) }
+            value.continuation = nil
+        }
     }
-
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         let completion = lock.withLock { let value = backgroundCompletion; backgroundCompletion = nil; return value }
         DispatchQueue.main.async { completion?() }
     }
+
+    private func finishCancelled(_ identifier: Int?) {
+        guard let identifier else { return }
+        var task: URLSessionTask?
+        lock.withLock {
+            guard var record = records[identifier] else { return }
+            guard record.state == .running else { return }
+            record.state = .cancelled
+            record.errorDescription = "Cancelled"
+            record.updatedAt = Date()
+            records[identifier] = record
+            try? persistLocked()
+            task = tasks.removeValue(forKey: identifier)
+            guard let value = pending.removeValue(forKey: identifier), !value.finished else { return }
+            value.finished = true
+            value.continuation?.resume(throwing: Swift.CancellationError())
+            value.continuation = nil
+        }
+        task?.cancel()
+    }
+
+    private func failTransfer(_ identifier: Int, error: Swift.Error = Error.persistenceFailure) {
+        var task: URLSessionTask?
+        lock.withLock {
+            guard var record = records[identifier] else { return }
+            guard record.state == .running else { return }
+            record.state = .failed
+            record.errorDescription = "Transfer response could not be saved"
+            record.updatedAt = Date()
+            records[identifier] = record
+            try? persistLocked()
+            task = tasks.removeValue(forKey: identifier)
+            guard let value = pending.removeValue(forKey: identifier), !value.finished else { return }
+            value.finished = true
+            value.continuation?.resume(throwing: error)
+            value.continuation = nil
+        }
+        task?.cancel()
+    }
+
+    private func completedResponse(for record: TransferRecord) throws -> TransferResponse {
+        guard let status = record.responseStatus, let data = try? Data(contentsOf: record.responseURL) else { throw Error.missingResponse }
+        let response = HTTPURLResponse(url: URL(string: "https://playloom.invalid")!, statusCode: status, httpVersion: nil, headerFields: record.responseHeaders)!
+        return TransferResponse(data: data, response: response, taskIdentifier: record.taskIdentifier)
+    }
+    private func metadata(_ record: TransferRecord) -> TransferMetadata {
+        TransferMetadata(taskIdentifier: record.taskIdentifier, requestBodyURL: record.requestBodyURL, responseURL: record.responseURL,
+            projectID: record.projectID, runID: record.runID, operationID: record.operationID, candidateID: record.candidateID,
+            baseRevisionID: record.baseRevisionID, state: record.state, responseStatus: record.responseStatus,
+            responseHeaders: record.responseHeaders, updatedAt: record.updatedAt)
+    }
+    private func isCancellation(_ error: Swift.Error?) -> Bool {
+        if error is Swift.CancellationError { return true }
+        if let urlError = error as? URLError { return urlError.code == .cancelled }
+        return false
+    }
+    private func persistLocked() throws { try store.save(Array(records.values)) }
+    private func ensureStoreLoaded() throws {
+        if storeLoadFailed { throw Error.persistenceFailure }
+    }
 }
 
 private final class SessionBox: @unchecked Sendable { var value: URLSession? }
-
+private enum WaitRegistration {
+    case waiting
+    case ready(BackgroundHTTPClient.TransferResponse)
+    case failure(Swift.Error)
+}
 private extension NSLock {
-    func withLock<T>(_ body: () -> T) -> T { lock(); defer { unlock() }; return body() }
+    func withLock<T>(_ body: () throws -> T) rethrows -> T { lock(); defer { unlock() }; return try body() }
 }

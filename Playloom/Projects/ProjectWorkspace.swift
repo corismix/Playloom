@@ -10,9 +10,9 @@ final class ProjectWorkspace {
         try fileManager.createDirectory(at: self.root, withIntermediateDirectories: true)
     }
 
-    func stage(_ project: GameProject) throws -> URL {
+    func stage(_ project: GameProject, candidateID: CandidateID) throws -> URL {
         let project = try project.validated()
-        let candidate = root.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        let candidate = root.appending(path: candidateID.description, directoryHint: .isDirectory)
         try fileManager.createDirectory(at: candidate, withIntermediateDirectories: true)
         do {
             for (path, content) in project.files {
@@ -31,6 +31,10 @@ final class ProjectWorkspace {
             try? fileManager.removeItem(at: candidate)
             throw error
         }
+    }
+
+    func stage(_ project: GameProject) throws -> URL {
+        try stage(project, candidateID: CandidateID())
     }
 
     private func persistCIArtifactIfRequested(_ candidate: URL) throws {
