@@ -1,16 +1,18 @@
 import Foundation
 
-nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
+nonisolated final class OpenCodeGoProvider: BackgroundRecoveringProvider, Sendable {
     let displayName = "OpenCode Go"
+    var supportsBackgroundContinuation: Bool { backgroundClient != nil }
+    var supportsBackgroundRecovery: Bool { backgroundClient != nil }
     private let keyStore: APIKeyStoring
     private let session: URLSession
     private let model: String
     private let conversationID: String
     private let backgroundClient: BackgroundHTTPClient?
 
-    init(keyStore: APIKeyStoring, session: URLSession? = nil, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString) {
+    init(keyStore: APIKeyStoring, session: URLSession? = nil, model: String = "deepseek-v4.1-flash", conversationID: String = UUID().uuidString, backgroundClient: BackgroundHTTPClient? = nil) {
         self.keyStore = keyStore; self.model = model; self.conversationID = conversationID
-        self.backgroundClient = session == nil ? .shared : nil
+        self.backgroundClient = backgroundClient ?? (session == nil ? .shared : nil)
         if let session { self.session = session } else {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 300
@@ -19,33 +21,114 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
         }
     }
 
-    func generateProject(prompt: String) async throws -> GameProject { try await request(user: prompt, effort: .max) }
+    func generateProject(prompt: String) async throws -> GameProject { try await request(user: prompt, effort: .max, context: Self.context(operation: .generate, prompt: prompt), useBackground: false).project }
+    func generateProject(request contextRequest: GenerationRequest) async throws -> GameProject {
+        try await self.request(user: contextRequest.prompt, effort: .max, context: contextRequest, useBackground: false).project
+    }
     func editProject(_ project: GameProject, instruction: String) async throws -> GameProject {
         let data = try JSONEncoder().encode(project)
         guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
-        return try await request(user: "Current project:\n\(json)\n\nEdit:\n\(instruction)\nReturn the complete updated project.", effort: .high)
+        return try await request(user: "Current project:\n\(json)\n\nEdit:\n\(instruction)\nReturn the complete updated project.", effort: .high, context: Self.context(operation: .edit, prompt: "", instruction: instruction), useBackground: false).project
+    }
+    func editProject(_ project: GameProject, request: GenerationRequest) async throws -> GameProject {
+        let data = try JSONEncoder().encode(project)
+        guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
+        return try await self.request(user: "Current project:\n\(json)\n\nEdit:\n\(request.instruction ?? request.prompt)\nReturn the complete updated project.", effort: .high, context: request, useBackground: false).project
     }
 
-    private func request(user: String, effort: ReasoningEffort) async throws -> GameProject {
-        guard let key = try keyStore.read() else { throw ProviderError.missingKey }
-        let first = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user)], effort: effort)
-        do {
-            let project = try Self.decodeProject(from: first)
-            print("PLAYLOOM_OPENCODE_REPAIR_USED=false")
-            return project
-        } catch {
-            print("PLAYLOOM_OPENCODE_REPAIR_USED=true")
-            let shape = Self.responseShape(first)
-            let repair = """
-            Your prior answer could not be decoded as the required project JSON (\(shape)). Return the same project again as one valid JSON object only. No markdown, analysis, preface, suffix, or unescaped newlines inside JSON strings. Required keys: title and files; files must contain index.html, game.js, and style.css.
-            """
-            let second = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user), .init(role: "assistant", content: first), .init(role: "user", content: repair)], effort: .low)
-            do { return try Self.decodeProject(from: second) }
-            catch { throw OpenCodeGoError.unparseable(first: shape, repair: Self.responseShape(second)) }
+    func generateProjectOutput(request: GenerationRequest) async throws -> GenerationProviderOutput {
+        try await self.request(user: request.prompt, effort: .max, context: request)
+    }
+
+    func editProjectOutput(_ project: GameProject, request: GenerationRequest) async throws -> GenerationProviderOutput {
+        let data = try JSONEncoder().encode(project)
+        guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
+        return try await self.request(user: "Current project:\n\(json)\n\nEdit:\n\(request.instruction ?? request.prompt)\nReturn the complete updated project.", effort: .high, context: request)
+    }
+
+    func acknowledge(_ output: GenerationProviderOutput) async throws {
+        guard let backgroundClient else { return }
+        for transfer in output.backgroundTransfers {
+            try backgroundClient.acknowledgeTransfer(taskIdentifier: transfer.taskIdentifier)
         }
     }
 
-    private func completion(key: String, messages: [Request.Message], effort: ReasoningEffort) async throws -> String {
+    func backgroundTransferMetadata(for runID: RunID) -> [BackgroundHTTPClient.TransferMetadata] {
+        backgroundClient?.metadata(for: runID) ?? []
+    }
+
+    func recoverBackgroundTransfers(for runID: RunID) async throws -> [BackgroundHTTPClient.TransferMetadata] {
+        guard let backgroundClient else { return [] }
+        let transfers = try await backgroundClient.recover(for: runID)
+        return transfers.filter { $0.runID == runID }
+    }
+
+    func cleanupTerminalTransfers(retaining runIDs: Set<RunID> = []) throws {
+        try backgroundClient?.cleanupTerminalTransfers(retaining: runIDs)
+    }
+
+    func recoverProject(from transfer: BackgroundHTTPClient.TransferMetadata) async throws -> GameProject {
+        guard let backgroundClient else { throw OpenCodeGoError.invalidResponse }
+        let result = try await backgroundClient.waitForTransfer(taskIdentifier: transfer.taskIdentifier)
+        let project = try decodeProjectResponse(data: result.data, response: result.response)
+        return project
+    }
+
+    func recoverProjectOutput(from transfer: BackgroundHTTPClient.TransferMetadata) async throws -> GenerationProviderOutput {
+        guard let backgroundClient else { throw OpenCodeGoError.invalidResponse }
+        let result = try await backgroundClient.waitForTransfer(taskIdentifier: transfer.taskIdentifier)
+        let metadata = backgroundClient.metadata(for: result.taskIdentifier) ?? transfer
+        return GenerationProviderOutput(project: try decodeProjectResponse(data: result.data, response: result.response), backgroundTransfers: [appMetadata(for: metadata)])
+    }
+
+    func cancelBackgroundTransfers(for runID: RunID) async throws {
+        try await backgroundClient?.cancelTransfers(for: runID)
+    }
+
+    private func request(user: String, effort: ReasoningEffort, context: GenerationRequest, useBackground: Bool = true) async throws -> GenerationProviderOutput {
+        guard let key = try keyStore.read() else { throw ProviderError.missingKey }
+        let first = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user)], effort: effort, context: context, useBackground: useBackground)
+        let project: GameProject
+        do {
+            project = try Self.decodeProject(from: first.content)
+        } catch {
+            let shape = Self.responseShape(first.content)
+            let repair = """
+            Your prior answer could not be decoded as the required project JSON (\(shape)). Return the same project again as one valid JSON object only. No markdown, analysis, preface, suffix, or unescaped newlines inside JSON strings. Required keys: title and files; files must contain index.html, game.js, and style.css.
+            """
+            let second = try await completion(key: key, messages: [.init(role: "system", content: Self.prompt), .init(role: "user", content: user), .init(role: "assistant", content: first.content), .init(role: "user", content: repair)], effort: .low, context: context, useBackground: useBackground)
+            let repaired: GameProject
+            do { repaired = try Self.decodeProject(from: second.content) }
+            catch { throw OpenCodeGoError.unparseable(first: shape, repair: Self.responseShape(second.content)) }
+            print("PLAYLOOM_OPENCODE_REPAIR_USED=true")
+            return GenerationProviderOutput(project: repaired, backgroundTransfers: [first, second].compactMap(backgroundMetadata))
+        }
+        print("PLAYLOOM_OPENCODE_REPAIR_USED=false")
+        return GenerationProviderOutput(project: project, backgroundTransfers: [first].compactMap(backgroundMetadata))
+    }
+
+    private struct ProviderResponse: Sendable {
+        let content: String
+        let taskIdentifier: Int?
+    }
+
+    private func backgroundMetadata(_ response: ProviderResponse) -> BackgroundTransferMetadata? {
+        guard let id = response.taskIdentifier, let metadata = backgroundClient?.metadata(for: id) else { return nil }
+        return appMetadata(for: metadata)
+    }
+
+    private func appMetadata(for transfer: BackgroundHTTPClient.TransferMetadata) -> BackgroundTransferMetadata {
+        let state: BackgroundTransferState = switch transfer.state {
+        case .running: .running
+        case .completed: .completed
+        case .failed: .failed
+        case .cancelled: .cancelled
+        case .interrupted: .interrupted
+        }
+        return BackgroundTransferMetadata(taskIdentifier: transfer.taskIdentifier, projectID: transfer.projectID, runID: transfer.runID, operationID: transfer.operationID, candidateID: transfer.candidateID, baseRevisionID: transfer.baseRevisionID, requestBodyURL: transfer.requestBodyURL.path, responseURL: transfer.responseURL.path, state: state, updatedAt: transfer.updatedAt, statusCode: transfer.responseStatus, responseHeaders: transfer.responseHeaders)
+    }
+
+    private func completion(key: String, messages: [Request.Message], effort: ReasoningEffort, context: GenerationRequest, useBackground: Bool = true) async throws -> ProviderResponse {
         var request = URLRequest(url: URL(string: "https://opencode.ai/zen/go/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
@@ -53,14 +136,36 @@ nonisolated final class OpenCodeGoProvider: ModelProvider, Sendable {
         request.setValue("playloom-ios/0.1", forHTTPHeaderField: "User-Agent")
         request.setValue(conversationID, forHTTPHeaderField: "x-opencode-session")
         let body = try JSONEncoder().encode(Request(model: model, messages: messages, thinking: .init(type: "enabled"), reasoningEffort: effort))
-        let (data, response): (Data, URLResponse)
-        if let backgroundClient { (data, response) = try await backgroundClient.upload(for: request, body: body) }
-        else { request.httpBody = body; (data, response) = try await session.data(for: request) }
+        let data: Data
+        let response: URLResponse
+        let taskIdentifier: Int?
+        if useBackground, let backgroundClient {
+            let transfer = try await backgroundClient.upload(for: request, body: body, context: context)
+            data = transfer.data
+            response = transfer.response
+            taskIdentifier = transfer.taskIdentifier
+        } else {
+            request.httpBody = body
+            (data, response) = try await session.data(for: request)
+            taskIdentifier = nil
+        }
         guard let http = response as? HTTPURLResponse else { throw OpenCodeGoError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw OpenCodeGoError.http(status: http.statusCode, providerMessage: Self.sanitizedError(data)) }
         let envelope = try JSONDecoder().decode(Response.self, from: data)
         guard let content = envelope.choices.first?.message.content, !content.isEmpty else { throw ProviderError.empty }
-        return content
+        return ProviderResponse(content: content, taskIdentifier: taskIdentifier)
+    }
+
+    private func decodeProjectResponse(data: Data, response: URLResponse) throws -> GameProject {
+        guard let http = response as? HTTPURLResponse else { throw OpenCodeGoError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw OpenCodeGoError.http(status: http.statusCode, providerMessage: Self.sanitizedError(data)) }
+        let envelope = try JSONDecoder().decode(Response.self, from: data)
+        guard let content = envelope.choices.first?.message.content, !content.isEmpty else { throw ProviderError.empty }
+        return try Self.decodeProject(from: content)
+    }
+
+    private static func context(operation: GenerationOperationKind, prompt: String, instruction: String? = nil) -> GenerationRequest {
+        GenerationRequest(operation: operation, projectID: ProjectID(), runID: RunID(), baseRevisionID: BaseRevisionID(), prompt: prompt, instruction: instruction)
     }
 
     static func decodeProject(from text: String) throws -> GameProject {

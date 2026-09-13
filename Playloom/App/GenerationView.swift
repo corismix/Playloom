@@ -45,7 +45,7 @@ struct GenerationView: View {
                             .buttonStyle(.borderedProminent).disabled(model.isWorking)
                         Spacer(minLength: 80)
                     }
-                    statusView
+                    activityView
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
@@ -56,6 +56,9 @@ struct GenerationView: View {
             .textFieldStyle(.roundedBorder)
             .buttonStyle(.borderedProminent)
             .navigationTitle("Playloom")
+                .task {
+                    await model.restoreOnLaunch(as: AppDelegate.launchRecoveryReason)
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { model.didBecomeActive() }
                     else if phase == .background { model.didEnterBackground() }
@@ -64,11 +67,21 @@ struct GenerationView: View {
         }
     }
 
-    @ViewBuilder private var statusView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack { if model.isWorking { ProgressView() }; Text(model.status).font(.headline) }
-            if !model.detail.isEmpty { Text(model.detail).font(.footnote).foregroundStyle(.secondary) }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+    @ViewBuilder private var activityView: some View {
+        if let activity = GenerationActivity(events: model.events) {
+            ActivityCard(activity: activity, onStop: model.isWorking ? { model.stop() } : nil)
+            if model.isWorking {
+                Button("Stop generation") { model.stop() }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("generation.stop")
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.status).font(.headline)
+                if !model.detail.isEmpty { Text(model.detail).font(.footnote).foregroundStyle(.secondary) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func gameHeight(in availableHeight: CGFloat) -> CGFloat {

@@ -3,12 +3,12 @@ import XCTest
 
 @MainActor
 final class RuntimeIntegrationTests: XCTestCase {
-    func testBundledGamePassesUniversalRuntimeChecksEndToEnd() async {
+    func testBundledGamePassesUniversalRuntimeChecksEndToEnd() async throws {
         let session = GameRuntimeSession()
         let webView = session.makeWebView()
         XCTAssertNotNil(webView.navigationDelegate)
 
-        let report = await UniversalRuntimeChecker().run(session: session)
+        let report = try await UniversalRuntimeChecker().run(session: session)
 
         XCTAssertTrue(report.isPassing, report.failures.joined(separator: ", "))
         XCTAssertEqual(Set(report.passed), Set([

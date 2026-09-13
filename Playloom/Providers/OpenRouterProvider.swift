@@ -8,10 +8,16 @@ nonisolated final class OpenRouterProvider: ModelProvider, Sendable {
 
     init(keyStore: APIKeyStoring, session: URLSession = .shared, model: String = "openai/gpt-5-mini") { self.keyStore = keyStore; self.session = session; self.model = model }
     func generateProject(prompt: String) async throws -> GameProject { try await request(system: Self.generationPrompt, user: prompt) }
+    func generateProject(request contextRequest: GenerationRequest) async throws -> GameProject { try await self.request(system: Self.generationPrompt, user: contextRequest.prompt) }
     func editProject(_ project: GameProject, instruction: String) async throws -> GameProject {
         let data = try JSONEncoder().encode(project)
         guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
         return try await request(system: Self.generationPrompt + " Return the complete updated project.", user: "Current project:\n\(json)\n\nEdit:\n\(instruction)")
+    }
+    func editProject(_ project: GameProject, request: GenerationRequest) async throws -> GameProject {
+        let data = try JSONEncoder().encode(project)
+        guard let json = String(data: data, encoding: .utf8) else { throw ProviderError.invalidProject }
+        return try await self.request(system: Self.generationPrompt + " Return the complete updated project.", user: "Current project:\n\(json)\n\nEdit:\n\(request.instruction ?? request.prompt)")
     }
 
     private func request(system: String, user: String) async throws -> GameProject {
