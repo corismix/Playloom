@@ -2,7 +2,7 @@ name: Playloom
 options:
   bundleIdPrefix: dev.corismix
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "18.0"
   xcodeVersion: "26.0"
 settings:
   base:
@@ -12,6 +12,10 @@ settings:
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     PRODUCT_BUNDLE_IDENTIFIER: dev.corismix.playloom
+packages:
+  Textual:
+    url: https://github.com/gonzalezreal/textual
+    exactVersion: 0.5.0
 targets:
   Playloom:
     type: application
@@ -21,6 +25,8 @@ targets:
     resources:
       - path: Playloom/Resources
         buildPhase: resources
+    dependencies:
+      - package: Textual
     settings:
       base:
         PRODUCT_NAME: Playloom

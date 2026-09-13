@@ -32,7 +32,7 @@ One maker sketching short arcade, puzzle, platform, or toy-like 2D games without
 
 ### Included
 
-- Native SwiftUI shell for iPhone and iPad.
+- Native SwiftUI shell for iPhone and iPad, targeting iOS/iPadOS 18 or later.
 - One app target organized into `App`, `Projects`, `Providers`, `Runtime`, `Generation`, and `Assets` folders.
 - Phaser-only generated runtime with a vendored, pinned engine version.
 - Project chat, initial generation, one or more edits, constrained patching, and reload.
@@ -41,7 +41,9 @@ One maker sketching short arcade, puzzle, platform, or toy-like 2D games without
 - Universal programmatic runtime floor on every candidate.
 - Game-specific assertions generated from a game plan, kept separate from the universal floor.
 - Bounded repair loop, rollback, revisions, app-private persistence, and Files import/export as reliability/projects milestones mature.
-- Long-generation UX and lifecycle resilience: real stage progress, provider streaming where available, honest keep-open guidance when iOS suspension would stop work, interrupted-request recovery, and temporary idle-timer suppression while foreground generation runs.
+- Phone-first maker flow: local project library → project chat → expandable activity → full-height play → chat edit. iPhone shows one focused Chat or Play surface; iPad may show both side by side.
+- Consumer-readable Markdown summaries rendered with the pinned Textual package from the first activity UI. Raw provider chain-of-thought is never shown or persisted.
+- Long-generation UX and lifecycle resilience: app-owned stage events, provider streaming where available, honest keep-open guidance, interrupted-request recovery, and temporary idle-timer suppression while foreground generation runs. Lock/suspension is best effort; relaunch and force-quit are distinct recoverable/interrupted states, never described as guaranteed continuation.
 - Procedural shapes and user-imported images as the free asset baseline.
 - Local usage estimates where providers return usage.
 
@@ -70,6 +72,8 @@ One maker sketching short arcade, puzzle, platform, or toy-like 2D games without
 - Paths, file types, sizes, network origins, and secret-like content are validated before launch.
 - Generation and patching are cancellable.
 - A failed candidate never replaces the current passing version.
+- Every generation/edit carries stable run and base-revision IDs. A completion based on anything except the current expected base is recorded as stale and cannot promote.
+- Promotion transactionally commits the staged candidate, validated report, immutable passing revision, and current pointer. Restore creates a new revision based on an older one so history remains linear.
 
 ### Typed game plan and evidence
 
@@ -81,14 +85,14 @@ Before recovery, failures are classified as model output, game runtime, validato
 
 ### Runtime validation
 
-Universal checks apply to every game and are owned by Playloom:
+Universal checks apply to every game and are owned by Playloom. Passing them is labeled **Basic runtime passed**: it proves the browser/runtime plumbing is healthy, not that every requested mechanic works. The bridge is an infrastructure prerequisite reported separately from the six universal checks:
 
 - the page and Phaser scene load before timeout;
-- no uncaught exception, unhandled rejection, or fatal console error occurs;
+- no uncaught exception, unhandled rejection, or fatal console error occurs through the end of all active probes;
 - the canvas contains meaningful non-background pixels;
-- the animation heartbeat remains alive;
-- the declared input probe reaches the game;
-- restart returns the runtime to a ready state.
+- heartbeat frame values show monotonic advancement;
+- a fresh, operation-scoped input event reaches the game after the current probe begins;
+- a fresh, operation-scoped restart event arrives after the current restart begins.
 
 Game-specific checks come from the structured game plan and vary by game:
 
@@ -98,6 +102,16 @@ Game-specific checks come from the structured game plan and vary by game:
 - win, lose, reset, or progression rules produce observable state.
 
 Game-specific checks may refine acceptance but cannot weaken the universal floor. Early vertical-slice candidates may have only the universal set. Reliability work adds the plan-generated set and bounded failure-classified recovery: diagnostic repair packets for structural/crash evidence and blind resampling for logic/behavior failures.
+
+### Consumer workflow and activity
+
+- The home surface is a local library of game cards. Each project owns its chat, current passing revision, run history, and settings.
+- A submitted prompt creates a durable draft/run before network work begins. Chat shows one expandable activity card backed only by recorded events such as planning, generating, staging, checking, resampling, and promoting.
+- Collapsed activity uses short plain-language summaries; Details shows timestamps, computed file diffs, check evidence, retry round, duration, and usage when available. It never invents percentages or exposes raw model reasoning.
+- Behavioral recovery uses **Trying another version** because ADR-008 requires blind resampling. **Fixing…** is reserved for structural/syntax/crash evidence that supports diagnostic repair.
+- When basic runtime checks pass, the app switches to Play. One action returns to Chat for an edit. Each accepted edit yields a short Markdown change summary, immutable revision, and Undo/Restore path.
+- Exhausted or cancelled attempts offer Keep current game, Try again, Discard attempt, and Details. The last passing game remains playable.
+- Provider setup and settings disclose that prompts/project source go to the selected provider and may incur provider charges. They cover key test, replace/revoke, rate limits, unavailable usage, model/capability choice, and repair budget. Secrets never enter project content, activity, screenshots, diagnostics, or exports.
 
 ### Projects and storage
 

@@ -9,13 +9,15 @@
 
 ## Credentials
 
+Before the first paid/provider request, Playloom names the selected provider and model, explains that the prompt and required project source leave the device, and states that charges are between the maker and that provider. Settings support connection test, replace/revoke, expired-key and rate-limit states, restricted-key/quota guidance where the provider offers it, and an honest unavailable state when usage is not returned. A future user-owned relay or self-hosted endpoint is a separate provider type with explicit endpoint trust, TLS, authentication, local-network permission, and capability discovery; it is not implied by BYOK.
+
 Stable API keys and any experimental OAuth material live in iOS Keychain. Secrets never enter project files, `UserDefaults`, logs, screenshots, clipboard history, diagnostics, or exports. Provider code authorizes a request without exposing persistent raw values to feature folders. Disconnect deletes the relevant items and cached state.
 
 Experimental ChatGPT login, if retained after the risk spike, uses `ASWebAuthenticationSession`, Authorization Code + PKCE, state verification, exact callbacks, and device-side exchange. No Playloom relay is allowed. Removing the experiment must not affect stable API-key providers.
 
 ## Web runtime
 
-Generated content is untrusted. The dedicated project `WKWebView` uses a typed, versioned bridge; blocks navigation, popups, downloads, sensors, clipboard, cross-project files, and undeclared network; and receives no credential/provider header. Runtime libraries are pinned and vendored. Process failure discards the candidate web view.
+Generated content is untrusted. The dedicated project `WKWebView` uses a typed, versioned bridge; blocks navigation, popups, downloads, sensors, clipboard, cross-project files, and undeclared network at both navigation and resource levels; and receives no credential/provider header. Runtime libraries are pinned and vendored. Process failure discards the candidate web view and follows a defined recreate/reload or candidate-failure path. Screenshot feedback and persisted diagnostics explicitly separate game-only capture from surrounding app UI and are sanitized before storage or provider disclosure.
 
 Milestone 0 tests whether these controls and universal instrumentation are technically sufficient and assesses how Guideline 4.7 affects the architecture. App Store classification is not treated as a security control or assumed approval.
 

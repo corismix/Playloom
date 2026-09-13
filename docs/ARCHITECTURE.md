@@ -48,13 +48,13 @@ Tests mirror these folders. Split a package or target only when there is a measu
 
 ### App
 
-SwiftUI library, chat, preview, provider settings, check reports, import/export, and accessibility. It owns presentation, not raw credentials or project mutation.
+SwiftUI library, chat, activity, preview, provider settings, check reports, import/export, and accessibility. iPhone switches between focused Chat and Play surfaces; iPad may use `NavigationSplitView` for chat and live play together. Activity/assistant summaries use pinned Textual Markdown rendering. It owns presentation, not raw credentials or project mutation, and never renders raw chain-of-thought.
 
 ### Projects
 
 The app-private container is canonical. Imports copy and validate external content into a new local project. Exports write an immutable snapshot. Live editing of a Files location is forbidden in v1 because coordination, security-scoped URLs, partial writes, and external edits would weaken revision guarantees.
 
-Candidate changes stage separately. Reliability and projects milestones add atomic promotion, immutable revision metadata, and rollback.
+Candidate changes stage separately. Reliability adds a durable single-project run journal and minimal immutable passing revisions before polished progress claims. Each edit is pinned to a base revision. Promotion atomically commits candidate files, report, immutable revision, and the current pointer; a stale completion cannot promote. Restore creates a new revision derived from an older snapshot. The projects milestone expands these primitives into the library, full history, migration, and import/export.
 
 ### Providers
 
@@ -76,6 +76,8 @@ Interfaces are illustrative. Persistent secrets stay behind the credential objec
 
 ### Generation
 
+The UI consumes typed, replayable `GenerationEvent` values from a generation orchestrator rather than inferring progress from scalar status text. Events include stable project/run/candidate/base-revision IDs and observed transitions such as stage started, provider output received, candidate staged, check finished, resample started, revision promoted, cancelled, interrupted, and failed. Persist curated event facts and outcomes, never provider reasoning content.
+
 The vertical-slice state machine is intentionally short:
 
 ```text
@@ -84,7 +86,7 @@ idle → plan → generate Phaser project → validate → launch → universal 
      → accepted | failed (keep prior passing state)
 ```
 
-Reliability extends it with staged revisions, bounded repair, rollback, and crash recovery. The model proposes typed operations against an allowlist; it never owns the filesystem.
+Reliability extends it with a durable run journal, staged revisions, bounded repair, rollback, cancellation, and crash recovery. Background URL-session task identifiers, response/body locations, and run metadata are persisted so an OS relaunch can reattach; in-memory continuations alone are insufficient. Suspension, OS relaunch, user force-quit, and foreground validation are distinct lifecycle states. The model proposes typed operations against an allowlist; it never owns the filesystem.
 
 ### Runtime
 
@@ -96,11 +98,13 @@ Two layers stay explicit:
 
 **Universal floor, owned by Playloom**
 - document/scene loads;
-- no fatal JavaScript or console error;
+- no fatal JavaScript or console error through the end of active probes;
 - canvas is not blank;
-- animation heartbeat remains live;
-- synthetic/declared input reaches the game;
-- restart returns to ready.
+- heartbeat frame values advance;
+- fresh operation-scoped synthetic/declared input reaches the game;
+- fresh operation-scoped restart returns to ready.
+
+Universal success is presented as “Basic runtime passed,” not proof that requested mechanics work. The bridge is an infrastructure prerequisite in addition to the six checks. Event waits match only evidence recorded after the current operation begins; stale acknowledgements never satisfy a later probe.
 
 **Game-specific assertions, produced from the game plan**
 - planned player action changes position/state;
