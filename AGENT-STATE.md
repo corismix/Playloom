@@ -6,11 +6,11 @@ M2A follow-up repair on `m2a-durable-watchable-runs`: durable provider checkpoin
 
 ## Latest validation
 
-`xcodegen generate`, `xcodebuild build-for-testing`, the focused recovery suites, and the full iPhone simulator lane pass. The full lane executed 65 tests with 1 credential-gated live smoke skip and 0 failures. Docs-equivalent prohibited-name, secret, required-file, and Markdown-link checks pass on the clean tracked tree; remote iOS/docs checks remain the publication gate.
+`xcodegen generate`, `xcodebuild build-for-testing`, the focused recovery suites, and the full iPhone simulator lane pass. The full lane executed 65 tests with 1 credential-gated live smoke skip and 0 failures. Docs-equivalent prohibited-name, secret, required-file, and Markdown-link checks pass on the clean tracked tree. The CI artifact collector now covers the durable `Application Support/Playloom/Candidates` root as well as the legacy temporary workspace; the first remote iOS run reached 65 passing tests but exposed that stale collector path, while remote docs passed.
 
 ## Next action
 
-Review the final diff for M2B scope, then commit, push, update the existing PR without merging it, and wait for remote iOS/docs checks.
+Commit and push the CI collector fix, update the existing PR without merging it, and wait for remote iOS/docs checks.
 
 ## Unresolved risks
 
